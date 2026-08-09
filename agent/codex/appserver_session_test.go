@@ -342,6 +342,200 @@ func TestAppServerSession_HandleRequestUserInputWritesCodexResponse(t *testing.T
 	}
 }
 
+func TestAppServerSession_SteerTurnUsesExpectedActiveTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stdin := &lockedWriteCloser{}
+	s := &appServerSession{
+		ctx:     ctx,
+		cancel:  cancel,
+		stdin:   stdin,
+		pending: make(map[int64]chan rpcResponseEnvelope),
+	}
+	s.alive.Store(true)
+	s.threadID.Store("thread-1")
+	s.currentTurn = "turn-7"
+
+	done := make(chan error, 1)
+	go func() { done <- s.SteerTurn("add unit tests") }()
+
+	line := waitForWrittenJSONLine(t, stdin)
+	var request struct {
+		ID     int64  `json:"id"`
+		Method string `json:"method"`
+		Params struct {
+			ThreadID       string `json:"threadId"`
+			ExpectedTurnID string `json:"expectedTurnId"`
+			Input          []struct {
+				Type string `json:"type"`
+				Text string `json:"text"`
+			} `json:"input"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(line), &request); err != nil {
+		t.Fatalf("decode request %q: %v", line, err)
+	}
+	if request.Method != "turn/steer" {
+		t.Fatalf("method = %q, want turn/steer", request.Method)
+	}
+	if request.Params.ThreadID != "thread-1" || request.Params.ExpectedTurnID != "turn-7" {
+		t.Fatalf("params = %#v, want thread-1/turn-7", request.Params)
+	}
+	if len(request.Params.Input) != 1 || request.Params.Input[0].Type != "text" || request.Params.Input[0].Text != "add unit tests" {
+		t.Fatalf("input = %#v, want one text item", request.Params.Input)
+	}
+
+	s.pendingMu.Lock()
+	responseCh := s.pending[request.ID]
+	s.pendingMu.Unlock()
+	if responseCh == nil {
+		t.Fatalf("no pending RPC response channel for id %d", request.ID)
+	}
+	responseCh <- rpcResponseEnvelope{ID: request.ID, Result: json.RawMessage(`{"turnId":"turn-7"}`)}
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("SteerTurn() error = %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("SteerTurn() did not finish after RPC response")
+	}
+}
+
+func TestAppServerSession_SteerTurnRejectsMissingActiveTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stdin := &lockedWriteCloser{}
+	s := &appServerSession{ctx: ctx, cancel: cancel, stdin: stdin}
+	s.alive.Store(true)
+	s.threadID.Store("thread-1")
+
+	err := s.SteerTurn("too late")
+	if err == nil || !strings.Contains(err.Error(), "no active turn") {
+		t.Fatalf("SteerTurn() error = %v, want no active turn", err)
+	}
+	if got := stdin.String(); got != "" {
+		t.Fatalf("unexpected RPC write without active turn: %q", got)
+	}
+}
+
+func TestAppServerSession_SteerTurnRejectsMismatchedTurn(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stdin := &lockedWriteCloser{}
+	s := &appServerSession{
+		ctx:     ctx,
+		cancel:  cancel,
+		stdin:   stdin,
+		pending: make(map[int64]chan rpcResponseEnvelope),
+	}
+	s.alive.Store(true)
+	s.threadID.Store("thread-1")
+	s.currentTurn = "turn-7"
+
+	done := make(chan error, 1)
+	go func() { done <- s.SteerTurn("late guidance") }()
+	line := waitForWrittenJSONLine(t, stdin)
+	var request struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(line), &request); err != nil {
+		t.Fatalf("decode request: %v", err)
+	}
+	s.pendingMu.Lock()
+	responseCh := s.pending[request.ID]
+	s.pendingMu.Unlock()
+	if responseCh == nil {
+		t.Fatalf("no pending RPC response channel for id %d", request.ID)
+	}
+	responseCh <- rpcResponseEnvelope{ID: request.ID, Result: json.RawMessage(`{"turnId":"turn-8"}`)}
+
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "want \"turn-7\"") {
+		t.Fatalf("SteerTurn() error = %v, want turn mismatch", err)
+	}
+}
+
+func TestAppServerSession_SteerTurnSerializesRequests(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	stdin := &lockedWriteCloser{}
+	s := &appServerSession{
+		ctx:     ctx,
+		cancel:  cancel,
+		stdin:   stdin,
+		pending: make(map[int64]chan rpcResponseEnvelope),
+	}
+	s.alive.Store(true)
+	s.threadID.Store("thread-1")
+	s.currentTurn = "turn-7"
+
+	firstDone := make(chan error, 1)
+	secondDone := make(chan error, 1)
+	go func() { firstDone <- s.SteerTurn("first") }()
+
+	firstLines := waitForWrittenJSONLines(t, stdin, 1)
+	var first struct {
+		ID int64 `json:"id"`
+	}
+	if err := json.Unmarshal([]byte(firstLines[0]), &first); err != nil {
+		t.Fatalf("decode first request: %v", err)
+	}
+
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		secondDone <- s.SteerTurn("second")
+	}()
+	<-secondStarted
+	time.Sleep(50 * time.Millisecond)
+	if lines := nonEmptyJSONLines(stdin.String()); len(lines) != 1 {
+		t.Fatalf("request count before first response = %d, want 1", len(lines))
+	}
+
+	s.pendingMu.Lock()
+	firstResponse := s.pending[first.ID]
+	s.pendingMu.Unlock()
+	if firstResponse == nil {
+		t.Fatalf("no pending RPC response channel for first id %d", first.ID)
+	}
+	firstResponse <- rpcResponseEnvelope{ID: first.ID, Result: json.RawMessage(`{"turnId":"turn-7"}`)}
+	if err := <-firstDone; err != nil {
+		t.Fatalf("first SteerTurn() error = %v", err)
+	}
+
+	lines := waitForWrittenJSONLines(t, stdin, 2)
+	var second struct {
+		ID     int64 `json:"id"`
+		Params struct {
+			Input []struct {
+				Text string `json:"text"`
+			} `json:"input"`
+		} `json:"params"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &second); err != nil {
+		t.Fatalf("decode second request: %v", err)
+	}
+	if len(second.Params.Input) != 1 || second.Params.Input[0].Text != "second" {
+		t.Fatalf("second input = %#v, want second", second.Params.Input)
+	}
+	s.pendingMu.Lock()
+	secondResponse := s.pending[second.ID]
+	s.pendingMu.Unlock()
+	if secondResponse == nil {
+		t.Fatalf("no pending RPC response channel for second id %d", second.ID)
+	}
+	secondResponse <- rpcResponseEnvelope{ID: second.ID, Result: json.RawMessage(`{"turnId":"turn-7"}`)}
+	if err := <-secondDone; err != nil {
+		t.Fatalf("second SteerTurn() error = %v", err)
+	}
+}
+
 var _ interface {
 	GetUsage(context.Context) (*core.UsageReport, error)
 } = (*appServerSession)(nil)
@@ -349,6 +543,8 @@ var _ interface {
 var _ interface {
 	GetContextUsage() *core.ContextUsage
 } = (*appServerSession)(nil)
+
+var _ core.AgentSessionSteerer = (*appServerSession)(nil)
 
 type lockedWriteCloser struct {
 	mu  sync.Mutex
@@ -447,6 +643,33 @@ func waitForWrittenJSONLine(t *testing.T, w *lockedWriteCloser) string {
 				if line != "" {
 					return line
 				}
+			}
+		}
+	}
+}
+
+func nonEmptyJSONLines(raw string) []string {
+	var lines []string
+	for _, line := range strings.Split(raw, "\n") {
+		if line = strings.TrimSpace(line); line != "" {
+			lines = append(lines, line)
+		}
+	}
+	return lines
+}
+
+func waitForWrittenJSONLines(t *testing.T, w *lockedWriteCloser, count int) []string {
+	t.Helper()
+	deadline := time.After(time.Second)
+	ticker := time.NewTicker(10 * time.Millisecond)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d JSON lines, buffer=%q", count, w.String())
+		case <-ticker.C:
+			if lines := nonEmptyJSONLines(w.String()); len(lines) >= count {
+				return lines
 			}
 		}
 	}
