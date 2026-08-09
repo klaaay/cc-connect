@@ -125,20 +125,21 @@ go build ./...
 同步官方更新时，在工作区干净且测试基线可用的前提下：
 
 1. `git fetch upstream`。
-2. 将自定义分支 rebase 到 `upstream/main`。
+2. 将 `upstream/main` 合并到自定义分支，保留可普通 push 的线性维护历史。
 3. 运行测试与构建。
 4. 原子替换本地二进制。
 5. 重启 daemon 并验证状态。
 6. 将更新后的分支推送到个人 fork。
 
-若 rebase、测试或构建失败，更新流程立即停止，不替换正在运行的二进制。
+若 merge、测试或构建失败，更新流程立即停止，不替换正在运行的二进制。
 
 ## 本机部署与数据保护
 
 - 安装路径：`~/.local/bin/cc-connect`，该目录已在 `PATH` 中。
 - daemon 的 work dir 保持 `/Users/wuzhen/.cc-connect`。
 - daemon 配置继续使用 `/Users/wuzhen/.cc-connect/config.toml`。
-- 只为目标 Codex 项目增加 `backend = "app_server"`；普通 busy 行为不增加配置。
+- 只为目标 Codex 项目增加 `backend = "app_server"` 和
+  `app_server_url = "stdio"`；普通 busy 行为不增加配置。
 - 切换前完整备份 `/Users/wuzhen/.cc-connect`。
 - 切换前确认没有活跃的 `codex exec`，避免截断正在运行的 turn。
 - 先构建、测试并安装自定义二进制，再用它执行 `daemon install --force`。
