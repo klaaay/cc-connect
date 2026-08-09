@@ -8497,6 +8497,30 @@ func (s *queuingAgentSession) Send(prompt string, _ string, _ []ImageAttachment,
 	return nil
 }
 
+type steeringAgentSession struct {
+	*queuingAgentSession
+	steerMu    sync.Mutex
+	steerCalls []string
+	steerErr   error
+}
+
+func newSteeringSession(id string) *steeringAgentSession {
+	return &steeringAgentSession{queuingAgentSession: newQueuingSession(id)}
+}
+
+func (s *steeringAgentSession) SteerTurn(prompt string) error {
+	s.steerMu.Lock()
+	defer s.steerMu.Unlock()
+	s.steerCalls = append(s.steerCalls, prompt)
+	return s.steerErr
+}
+
+func (s *steeringAgentSession) getSteerCalls() []string {
+	s.steerMu.Lock()
+	defer s.steerMu.Unlock()
+	return append([]string(nil), s.steerCalls...)
+}
+
 // blockingSendAgentSession blocks in Send until unblock is closed, mimicking agents
 // whose Send does not return until the prompt turn completes (e.g. ACP session/prompt).
 type blockingSendAgentSession struct {
@@ -10126,9 +10150,9 @@ func TestCmdPs_IdleSession_RepliesNoSession(t *testing.T) {
 	}
 }
 
-func TestCmdPs_BusySession_InjectsToAgent(t *testing.T) {
+func TestCmdPs_BusySession_SteersActiveTurn(t *testing.T) {
 	p := &stubPlatformEngine{n: "test"}
-	sess := newQueuingSession("ps-busy")
+	sess := newSteeringSession("ps-busy")
 	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
 
 	key := "test:user1"
@@ -10147,11 +10171,14 @@ func TestCmdPs_BusySession_InjectsToAgent(t *testing.T) {
 	msg := &Message{SessionKey: key, Content: "/ps add unit tests", ReplyCtx: "ctx"}
 	e.cmdPs(p, msg, []string{"add", "unit", "tests"})
 
+	if calls := sess.getSteerCalls(); len(calls) != 1 || calls[0] != "add unit tests" {
+		t.Fatalf("SteerTurn calls = %v, want [add unit tests]", calls)
+	}
 	sess.sendMu.Lock()
-	calls := append([]string(nil), sess.sendCalls...)
+	sendCalls := append([]string(nil), sess.sendCalls...)
 	sess.sendMu.Unlock()
-	if len(calls) != 1 || calls[0] != "add unit tests" {
-		t.Fatalf("expected Send(\"add unit tests\"), got %v", calls)
+	if len(sendCalls) != 0 {
+		t.Fatalf("Send calls = %v, want none", sendCalls)
 	}
 
 	sent := p.getSent()
@@ -10164,6 +10191,37 @@ func TestCmdPs_BusySession_InjectsToAgent(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected MsgPsSent reply, got %v", sent)
+	}
+}
+
+func TestCmdPs_BusySessionWithoutSteeringCapabilityFailsSafely(t *testing.T) {
+	p := &stubPlatformEngine{n: "test"}
+	sess := newQueuingSession("ps-no-steer")
+	e := NewEngine("test", &stubAgent{}, []Platform{p}, "", LangEnglish)
+
+	key := "test:user1"
+	e.interactiveMu.Lock()
+	e.interactiveStates[key] = &interactiveState{agentSession: sess, platform: p}
+	e.interactiveMu.Unlock()
+
+	session := e.sessions.GetOrCreateActive(key)
+	if !session.TryLock() {
+		t.Fatal("expected TryLock to succeed")
+	}
+	defer session.Unlock()
+
+	msg := &Message{SessionKey: key, Content: "/ps do not race", ReplyCtx: "ctx"}
+	e.cmdPs(p, msg, []string{"do", "not", "race"})
+
+	sess.sendMu.Lock()
+	sendCalls := append([]string(nil), sess.sendCalls...)
+	sess.sendMu.Unlock()
+	if len(sendCalls) != 0 {
+		t.Fatalf("Send calls = %v, want none", sendCalls)
+	}
+	sent := p.getSent()
+	if len(sent) == 0 || !strings.Contains(sent[len(sent)-1], e.i18n.T(MsgPsSendFailed)) {
+		t.Fatalf("expected MsgPsSendFailed, got %v", sent)
 	}
 }
 

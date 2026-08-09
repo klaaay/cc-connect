@@ -6264,21 +6264,32 @@ func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
 	e.interactiveMu.Lock()
 	state, ok := e.interactiveStates[iKey]
 	e.interactiveMu.Unlock()
-	if !ok || state == nil || state.agentSession == nil || !state.agentSession.Alive() {
+	if !ok || state == nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsNoSession))
 		return
 	}
-	// /ps is only meaningful as a supplement to a turn already in flight.
-	// When the session is idle, injecting via agentSession.Send bypasses the
-	// session lock and races with concurrent normal messages on the CLI's
-	// stdin, so reject instead.
+	state.mu.Lock()
+	agentSession := state.agentSession
+	state.mu.Unlock()
+	if agentSession == nil || !agentSession.Alive() {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsNoSession))
+		return
+	}
+
 	_, sessions := e.sessionContextForKey(msg.SessionKey)
 	if session := sessions.GetOrCreateActive(msg.SessionKey); !session.Busy() {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsNoSession))
 		return
 	}
-	if err := state.agentSession.Send(text, "", nil, nil); err != nil {
-		slog.Error("ps: send failed", "error", err)
+
+	steerer, ok := agentSession.(AgentSessionSteerer)
+	if !ok {
+		slog.Warn("ps: active agent session does not support steering", "session", msg.SessionKey)
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSendFailed))
+		return
+	}
+	if err := steerer.SteerTurn(text); err != nil {
+		slog.Error("ps: steer failed", "error", err)
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSendFailed))
 		return
 	}
