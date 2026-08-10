@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +13,42 @@ import (
 
 	"github.com/chenhg5/cc-connect/core"
 )
+
+func TestAppServerSession_AppServerCommandPreservesCLIProfile(t *testing.T) {
+	s := &appServerSession{
+		cliBin:       "/opt/custom-codex",
+		cliExtraArgs: []string{"--profile", "cc-connect-no-superpowers"},
+		url:          "stdio://",
+		model:        "gpt-5.6-sol",
+	}
+
+	bin, args := s.appServerCommand()
+
+	if bin != "/opt/custom-codex" {
+		t.Fatalf("binary = %q, want /opt/custom-codex", bin)
+	}
+	want := []string{
+		"--profile", "cc-connect-no-superpowers",
+		"app-server", "--listen", "stdio://",
+		"-c", `model="gpt-5.6-sol"`,
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
+
+func TestAppServerSession_AppServerCommandDefaultsToCodex(t *testing.T) {
+	s := &appServerSession{}
+
+	bin, args := s.appServerCommand()
+
+	if bin != "codex" {
+		t.Fatalf("binary = %q, want codex", bin)
+	}
+	if want := []string{"app-server"}; !reflect.DeepEqual(args, want) {
+		t.Fatalf("args = %#v, want %#v", args, want)
+	}
+}
 
 func TestAppServerSession_ApplyThreadRuntimeState(t *testing.T) {
 	s := &appServerSession{}

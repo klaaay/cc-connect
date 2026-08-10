@@ -145,6 +145,8 @@ type appServerRequestUserInputAnswer struct {
 }
 
 type appServerSession struct {
+	cliBin         string
+	cliExtraArgs   []string
 	url            string
 	workDir        string
 	model          string
@@ -197,9 +199,11 @@ const (
 	appServerUsageRefreshTimeout = 1500 * time.Millisecond
 )
 
-func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
+func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &appServerSession{
+		cliBin:           strings.TrimSpace(cliBin),
+		cliExtraArgs:     append([]string(nil), cliExtraArgs...),
 		url:              url,
 		workDir:          workDir,
 		model:            model,
@@ -240,8 +244,13 @@ func newAppServerSession(ctx context.Context, url, workDir, model, effort, mode,
 	return s, nil
 }
 
-func (s *appServerSession) connect() error {
-	args := []string{"app-server"}
+func (s *appServerSession) appServerCommand() (string, []string) {
+	bin := strings.TrimSpace(s.cliBin)
+	if bin == "" {
+		bin = "codex"
+	}
+	args := append([]string(nil), s.cliExtraArgs...)
+	args = append(args, "app-server")
 	if strings.TrimSpace(s.url) != "" {
 		args = append(args, "--listen", strings.TrimSpace(s.url))
 	}
@@ -257,7 +266,12 @@ func (s *appServerSession) connect() error {
 	if baseURL := strings.TrimSpace(s.baseURL); baseURL != "" {
 		args = append(args, "-c", fmt.Sprintf("openai_base_url=%q", baseURL))
 	}
-	cmd := exec.CommandContext(s.ctx, "codex", args...)
+	return bin, args
+}
+
+func (s *appServerSession) connect() error {
+	bin, args := s.appServerCommand()
+	cmd := exec.CommandContext(s.ctx, bin, args...)
 	cmd.Dir = s.workDir
 	env := append([]string(nil), s.extraEnv...)
 	if s.codexHome != "" {
