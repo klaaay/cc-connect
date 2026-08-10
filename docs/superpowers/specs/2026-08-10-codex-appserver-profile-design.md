@@ -1,113 +1,64 @@
-# Codex app-server `--profile` 透传设计
+# Codex app-server 项目级 Skill 禁用设计
 
 ## 背景
 
-项目 `clawclaw-codex-no-superpowers-bot` 使用以下配置：
+Codex 0.147.0 明确拒绝 `codex --profile <name> app-server`，因此把项目 `cmd` 中的
+`--profile` 透传给 app-server 会导致进程在初始化前退出。cc-connect 需要提供原生的、
+项目级的 Skill 禁用配置，而不是继续依赖 app-server 不支持的 profile。
+
+## 配置与作用域
+
+仅 Codex 项目的 `[projects.agent.options]` 支持：
 
 ```toml
-[projects.agent.options]
-backend = "app_server"
-app_server_url = "stdio"
-cmd = "codex --profile cc-connect-no-superpowers"
+disabled_skills = [
+  "superpowers-using-superpowers",
+  "superpowers-brainstorming",
+]
 ```
 
-`cc-connect` 会在 `Agent.New` 中把 `cmd` 解析为可执行文件 `codex` 和额外参数 `--profile cc-connect-no-superpowers`。`exec` 后端会使用这两部分；`app_server` 后端只传递模型、工作目录等字段，并在 `connect` 中固定执行 `codex app-server`。因此实际进程缺少 `--profile`，Codex 会加载默认配置和 Superpowers skills。
+- 只有显式配置 `disabled_skills` 的项目生效。
+- 未配置或配置空数组的项目保持现有行为，继续加载全部 Skill。
+- `cmd` 只描述 CLI 可执行文件及其参数，不隐式控制 Skill。
+- 同名 Skill 在多个 Codex Skill 根目录中出现时，全部禁用。
+- 任一配置名称无法解析时，session 启动失败并列出未知名称，避免静默失效。
 
-OpenAI 官方配置说明要求用 `--profile profile-name` 选择 `$CODEX_HOME/profile-name.config.toml`。本次修复必须保留该参数，不能用 skills 路径硬编码代替 profile。
+## 双层禁用
 
-## 目标
+cc-connect 和 Codex app-server 会分别扫描 Skill。为了实现“真正不加载”，同一份配置
+同时作用于两层：
 
-- stdio app-server 继承 `cmd` 中的可执行文件和全部额外参数。
-- 目标配置启动为 `codex --profile cc-connect-no-superpowers app-server --listen stdio:// ...`。
-- 未设置自定义 `cmd` 的项目继续执行 `codex app-server ...`。
-- 保留现有 model、reasoning effort、provider、base URL、`CODEX_HOME` 和环境变量行为。
-- 修复后重新构建、安装并重启本地 launchd daemon。
-- 提交并推送到个人 fork 的 `agent/codex-ps-steer` 分支。
-
-## 非目标
-
-- 不新增 `app_server_profile` 配置项。
-- 不创建独立 `CODEX_HOME`，不复制认证文件。
-- 不修改 exec 后端的命令构造逻辑。
-- 不修改全局 skills 或现有 profile 文件。
-- 不改变普通忙碌消息和 `/ps` steer 的语义。
-
-## 方案
-
-### 参数传递
-
-`Agent.StartSession` 已经读取 `cliBin` 和 `cliExtraArgs`。app-server 分支把它们传给 `newAppServerSession`，后者在 session 中保存副本。
-
-`connect` 按以下顺序构造命令：
+1. cc-connect 的项目级 `SkillRegistry` 过滤禁用名称，使其不出现在管理 API、菜单和
+   Skill 斜杠命令解析中。
+2. Codex Agent 在启动 session 前，从当前项目的 Codex Skill 根目录解析所有匹配的
+   `SKILL.md` 路径，并为 exec 或 app-server 进程追加覆盖：
 
 ```text
-<cliBin> <cliExtraArgs...> app-server [--listen URL] [-c key=value ...]
+-c 'skills.config=[{path="/abs/path/SKILL.md",enabled=false}]'
 ```
 
-目标项目得到：
+Codex 官方 app-server 的 `skills/list` 已验证会把这类进程级覆盖返回为 `enabled:false`。
 
-```text
-codex --profile cc-connect-no-superpowers app-server --listen stdio:// -c model="gpt-5.6-sol"
-```
+## 组件变化
 
-额外参数必须位于 `app-server` 之前，因为它们来自用户配置的 Codex 全局命令前缀。app-server 自身的 `--listen` 和运行时 `-c` 覆盖项仍由 cc-connect 追加。
+- `core/interfaces.go`：新增可选的项目级禁用 Skill provider 接口。
+- `core/skill.go`：SkillRegistry 支持按规范化名称过滤。
+- `core/engine.go`：Engine 初始化时读取 Agent 的禁用名称。
+- `agent/codex/codex.go`：解析 `disabled_skills`，在 session 启动前解析路径，并对 exec
+  和 app-server 注入覆盖。
+- `agent/codex/appserver_session.go`：命令构造接收已解析的禁用路径并生成 TOML 覆盖。
 
-### 组件变化
+## 兼容性与错误处理
 
-1. `agent/codex/codex.go`
-   - app-server 分支向构造函数传递 `cliBin`、`cliExtraArgs`。
-2. `agent/codex/appserver_session.go`
-   - session 增加 CLI binary 与 prefix args 字段。
-   - 构造函数复制参数切片，避免调用方后续修改。
-   - 提取一个无副作用的命令构造函数，返回 binary 和 args。
-   - `connect` 使用构造结果，并把 prefix args 放在 `app-server` 前。
-3. `agent/codex/appserver_session_test.go`
-   - 增加命令构造回归测试，证明 profile 参数不会丢失。
-   - 覆盖默认 binary/空 prefix args，防止默认行为回归。
+- exec 与 app-server 未配置禁用项时都不增加任何 `skills.config` 参数。
+- 名称按大小写不敏感、连字符与下划线等价的规则匹配，与 cc-connect Skill 命令一致。
+- 路径使用 JSON/TOML 兼容的字符串转义，不经过 shell 拼接。
+- 旧 `cc-connect-no-superpowers.config.toml` 在新配置验证成功后归档移除。
 
-## 数据流
+## 验证
 
-```text
-config.toml 的 cmd
-  → core.ParseCmdOpts
-  → Agent.cmd + Agent.cliExtraArgs
-  → Agent.StartSession
-  → newAppServerSession
-  → appServerSession.connect
-  → exec.CommandContext(cliBin, cliExtraArgs + app-server args)
-```
-
-profile 仍由 Codex 自己解析。cc-connect 只负责无损传递参数，不读取或解释 profile 文件内容。
-
-## 错误处理与兼容性
-
-- `Agent.New` 继续用 `exec.LookPath(cliBin)` 提前校验 binary。
-- 不重新解析或拼接 shell 字符串；继续使用 `core.ParseCmdOpts` 的结果，避免引入 shell 注入路径。
-- 参数切片为空时，命令与当前 app-server 行为一致。
-- app-server 启动、初始化或 thread 恢复失败时，沿用现有错误返回和 session 清理逻辑。
-- stdio 和 WebSocket listen URL 都使用同一命令构造路径，因此都会继承 binary 与 prefix args。
-
-## 测试策略
-
-按 TDD 实施：
-
-1. 先添加失败测试，通过命令构造函数断言 profile 参数位于 `app-server` 前，确认当前实现缺少该能力。
-2. 添加默认命令测试，断言无额外参数时仍是 `codex app-server ...`，并覆盖自定义 binary。
-3. 编写最小实现使测试通过。
-4. 运行 Codex agent 包测试和竞态测试。
-5. 运行现有 `/ps` steer 测试，确保本次命令修复不影响中途插话。
-6. 运行 `go vet ./...`、构建和现有全量测试；已知 macOS `TempDir RemoveAll` 清理竞态单独记录，不与新回归混淆。
-
-## 部署与验收
-
-1. 提交并推送 `agent/codex-ps-steer`。
-2. 构建带个人标识的二进制，原子替换 `/Users/wuzhen/.local/bin/cc-connect`。
-3. 确认没有活跃 Codex turn 后重启 daemon。
-4. 在目标项目创建新 session，不能复用修复前已启动且缺少 profile 的 app-server 进程。
-5. 用进程参数确认存在 `--profile cc-connect-no-superpowers`。
-6. 发送普通消息，确认不会读取 `superpowers-using-superpowers/SKILL.md`。
-7. 确认 daemon、cron、sessions 和 timers 保持正常。
-
-## 回滚
-
-若新版本无法启动，重新安装备份版本或从切换前提交构建二进制，并让 launchd 继续指向 `/Users/wuzhen/.local/bin/cc-connect`。配置和持久数据目录不迁移，因此回滚不需要恢复 sessions、crons 或 timers。
+1. 单元测试覆盖配置解析、项目隔离、重复名称、未知名称和命令参数。
+2. Codex agent 包测试、竞态测试、`go vet` 与全量测试通过。
+3. 迁移目标项目后重建并重启 daemon。
+4. 验证目标项目能启动 session，进程参数包含 `skills.config`；其他项目不包含该覆盖。
+5. 验证 sessions、crons 和 timers 数量不变。

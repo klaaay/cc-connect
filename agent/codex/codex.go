@@ -44,6 +44,7 @@ type Agent struct {
 	appendPrompt    string
 	cmd             string   // CLI binary name, default "codex"
 	cliExtraArgs    []string // extra args parsed from cmd after the binary
+	disabledSkills  []string // project-level skill names disabled for this agent only
 	providers       []core.ProviderConfig
 	activeIdx       int      // -1 = no provider set
 	configEnv       []string // env vars from [projects.agent.options.env] — persists across SetSessionEnv calls
@@ -69,6 +70,10 @@ func New(opts map[string]any) (core.Agent, error) {
 	appServerURL = normalizeAppServerURL(appServerURL)
 
 	cmd, cliExtraArgs := core.ParseCmdOpts(opts, "codex")
+	disabledSkills, err := parseCodexStringSlice(opts["disabled_skills"])
+	if err != nil {
+		return nil, err
+	}
 
 	if _, err := exec.LookPath(cmd); err != nil {
 		return nil, fmt.Errorf("codex: %q CLI not found in PATH, install with: npm install -g @openai/codex", cmd)
@@ -103,6 +108,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		appendPrompt:    strings.TrimSpace(appendPrompt),
 		cmd:             cmd,
 		cliExtraArgs:    cliExtraArgs,
+		disabledSkills:  disabledSkills,
 		configEnv:       configEnv,
 		activeIdx:       -1,
 	}, nil
@@ -353,7 +359,6 @@ func readCodexCachedModels() []core.ModelOption {
 	return parseCodexModelsJSON(b)
 }
 
-
 // parseCodexModelsJSON parses a Codex models JSON file (model_catalog.json
 // or models_cache.json) into a deduplicated, filtered slice of ModelOption.
 // It is shared by readCodexCachedModels and readCodexModelCatalog.
@@ -398,7 +403,6 @@ func parseCodexModelsJSON(data []byte) []core.ModelOption {
 	}
 	return models
 }
-
 
 // readCodexModelCatalog reads $CODEX_HOME/config.toml to find the
 // model_catalog_json setting, then reads and parses that JSON file.
@@ -473,6 +477,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	appendPrompt := a.appendPrompt
 	cliBin := a.cmd
 	cliExtraArgs := a.cliExtraArgs
+	disabledSkills := append([]string(nil), a.disabledSkills...)
 	workDir := a.workDir
 	// Order matters for MergeEnv override semantics (later wins):
 	//   1. configEnv — static env from [projects.agent.options.env]
@@ -500,9 +505,14 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 		}
 	}
 
-	if backend == "app_server" {
-		return newAppServerSession(ctx, cliBin, cliExtraArgs, appServerURL, workDir, model, reasoningEffort, mode, sessionID, baseURL, provName, extraEnv, codexHome, systemPrompt, appendPrompt)
+	disabledSkillPaths, err := resolveDisabledCodexSkillPaths(codexSkillDirs(workDir, codexHome), disabledSkills)
+	if err != nil {
+		return nil, err
 	}
+	if backend == "app_server" {
+		return newAppServerSession(ctx, cliBin, cliExtraArgs, disabledSkillPaths, appServerURL, workDir, model, reasoningEffort, mode, sessionID, baseURL, provName, extraEnv, codexHome, systemPrompt, appendPrompt)
+	}
+	cliExtraArgs = withCodexDisabledSkillsArgs(cliExtraArgs, disabledSkillPaths)
 	if codexHome != "" {
 		extraEnv = append(extraEnv, "CODEX_HOME="+codexHome)
 	}
@@ -587,6 +597,113 @@ func (a *Agent) SkillDirs() []string {
 		absDir = workDir
 	}
 	return codexSkillDirs(absDir, codexHome)
+}
+
+// DisabledSkillNames returns a copy of the skill names disabled only for this
+// project's agent configuration.
+func (a *Agent) DisabledSkillNames() []string {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return append([]string(nil), a.disabledSkills...)
+}
+
+func parseCodexStringSlice(raw any) ([]string, error) {
+	var values []string
+	switch items := raw.(type) {
+	case nil:
+		return nil, nil
+	case []string:
+		values = items
+	case []any:
+		for _, item := range items {
+			value, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("codex: disabled_skills entries must be strings, got %T", item)
+			}
+			values = append(values, value)
+		}
+	default:
+		return nil, fmt.Errorf("codex: disabled_skills must be an array of strings, got %T", raw)
+	}
+
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		normalized := normalizeCodexSkillName(value)
+		if normalized == "" {
+			continue
+		}
+		if _, exists := seen[normalized]; exists {
+			continue
+		}
+		seen[normalized] = struct{}{}
+		result = append(result, value)
+	}
+	return result, nil
+}
+
+func normalizeCodexSkillName(name string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(name), "-", "_"))
+}
+
+func resolveDisabledCodexSkillPaths(dirs, names []string) ([]string, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
+
+	wanted := make(map[string]string, len(names))
+	for _, name := range names {
+		if normalized := normalizeCodexSkillName(name); normalized != "" {
+			wanted[normalized] = name
+		}
+	}
+	found := make(map[string]bool, len(wanted))
+	seenPaths := make(map[string]struct{})
+	var paths []string
+	for _, root := range dirs {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			normalized := normalizeCodexSkillName(entry.Name())
+			if _, ok := wanted[normalized]; !ok {
+				continue
+			}
+			skillPath := filepath.Clean(filepath.Join(root, entry.Name(), "SKILL.md"))
+			info, err := os.Stat(skillPath)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			found[normalized] = true
+			if _, exists := seenPaths[skillPath]; exists {
+				continue
+			}
+			seenPaths[skillPath] = struct{}{}
+			paths = append(paths, skillPath)
+		}
+	}
+
+	var missing []string
+	for normalized, original := range wanted {
+		if !found[normalized] {
+			missing = append(missing, original)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		return nil, fmt.Errorf("codex: disabled_skills not found: %s", strings.Join(missing, ", "))
+	}
+	return paths, nil
+}
+
+func withCodexDisabledSkillsArgs(args, paths []string) []string {
+	result := append([]string(nil), args...)
+	if override := codexDisabledSkillsOverride(paths); override != "" {
+		result = append(result, "-c", override)
+	}
+	return result
 }
 
 // ── ContextCompressor implementation ──────────────────────────

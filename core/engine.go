@@ -751,6 +751,9 @@ func NewEngine(name string, ag Agent, platforms []Platform, sessionStorePath str
 	if sp, ok := ag.(SkillProvider); ok {
 		e.skills.SetDirs(sp.SkillDirs())
 	}
+	if dsp, ok := ag.(DisabledSkillProvider); ok {
+		e.skills.SetDisabledNames(dsp.DisabledSkillNames())
+	}
 
 	return e
 }

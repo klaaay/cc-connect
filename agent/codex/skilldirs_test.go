@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -77,6 +78,47 @@ func TestSkillDirs_FallsBackToEnvCodexHome(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("SkillDirs() missing CODEX_HOME skills dir: %v", got)
+	}
+}
+
+func TestResolveDisabledCodexSkillPathsMatchesEverySource(t *testing.T) {
+	first := t.TempDir()
+	second := t.TempDir()
+	for _, root := range []string{first, second} {
+		skillDir := filepath.Join(root, "superpowers-using-superpowers")
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("instructions"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	got, err := resolveDisabledCodexSkillPaths(
+		[]string{first, second},
+		[]string{"SUPERPOWERS_USING_SUPERPOWERS"},
+	)
+	if err != nil {
+		t.Fatalf("resolveDisabledCodexSkillPaths() error: %v", err)
+	}
+	want := []string{
+		filepath.Join(first, "superpowers-using-superpowers", "SKILL.md"),
+		filepath.Join(second, "superpowers-using-superpowers", "SKILL.md"),
+	}
+	if len(got) != len(want) {
+		t.Fatalf("paths = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("paths[%d] = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func TestResolveDisabledCodexSkillPathsRejectsUnknownNames(t *testing.T) {
+	_, err := resolveDisabledCodexSkillPaths([]string{t.TempDir()}, []string{"missing-skill"})
+	if err == nil || !strings.Contains(err.Error(), "missing-skill") {
+		t.Fatalf("error = %v, want unknown skill name", err)
 	}
 }
 

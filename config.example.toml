@@ -1569,6 +1569,11 @@ app_secret = "your-feishu-app-secret"
 # Optional: specify Codex reasoning effort / 可选：指定 Codex 推理强度
 # reasoning_effort = "high"  # "minimal" | "low" | "medium" | "high" | "xhigh"
 #
+# Optional: disable selected skills only for this project / 可选：仅为本项目禁用指定 Skill
+# Applies to both Codex exec and app-server backends. Other projects are unaffected.
+# 同时支持 Codex exec 与 app-server 后端，不影响其他项目。
+# disabled_skills = ["superpowers-using-superpowers", "superpowers-brainstorming"]
+#
 # Optional: project system prompt / 可选：项目系统提示
 # Codex has no native system-prompt flag, so cc-connect injects this as a
 # preamble prepended to your first message of each new session (resumed

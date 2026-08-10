@@ -145,18 +145,19 @@ type appServerRequestUserInputAnswer struct {
 }
 
 type appServerSession struct {
-	cliBin         string
-	cliExtraArgs   []string
-	url            string
-	workDir        string
-	model          string
-	effort         string
-	mode           string
-	baseURL        string
-	modelProvider  string
-	extraEnv       []string
-	codexHome      string
-	promptPreamble string
+	cliBin             string
+	cliExtraArgs       []string
+	disabledSkillPaths []string
+	url                string
+	workDir            string
+	model              string
+	effort             string
+	mode               string
+	baseURL            string
+	modelProvider      string
+	extraEnv           []string
+	codexHome          string
+	promptPreamble     string
 
 	events chan core.Event
 
@@ -199,27 +200,28 @@ const (
 	appServerUsageRefreshTimeout = 1500 * time.Millisecond
 )
 
-func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
+func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs, disabledSkillPaths []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &appServerSession{
-		cliBin:           strings.TrimSpace(cliBin),
-		cliExtraArgs:     append([]string(nil), cliExtraArgs...),
-		url:              url,
-		workDir:          workDir,
-		model:            model,
-		effort:           effort,
-		mode:             mode,
-		baseURL:          baseURL,
-		modelProvider:    modelProvider,
-		extraEnv:         append([]string(nil), extraEnv...),
-		codexHome:        strings.TrimSpace(codexHome),
-		promptPreamble:   buildCodexPromptPreamble(systemPrompt, appendPrompt),
-		events:           make(chan core.Event, 128),
-		ctx:              sessionCtx,
-		cancel:           cancel,
-		pending:          make(map[int64]chan rpcResponseEnvelope),
-		pendingApprovals: make(map[string]chan core.PermissionResult),
-		preambleSent:     resumeID != "" && resumeID != core.ContinueSession,
+		cliBin:             strings.TrimSpace(cliBin),
+		cliExtraArgs:       append([]string(nil), cliExtraArgs...),
+		disabledSkillPaths: append([]string(nil), disabledSkillPaths...),
+		url:                url,
+		workDir:            workDir,
+		model:              model,
+		effort:             effort,
+		mode:               mode,
+		baseURL:            baseURL,
+		modelProvider:      modelProvider,
+		extraEnv:           append([]string(nil), extraEnv...),
+		codexHome:          strings.TrimSpace(codexHome),
+		promptPreamble:     buildCodexPromptPreamble(systemPrompt, appendPrompt),
+		events:             make(chan core.Event, 128),
+		ctx:                sessionCtx,
+		cancel:             cancel,
+		pending:            make(map[int64]chan rpcResponseEnvelope),
+		pendingApprovals:   make(map[string]chan core.PermissionResult),
+		preambleSent:       resumeID != "" && resumeID != core.ContinueSession,
 	}
 	s.alive.Store(true)
 
@@ -266,7 +268,32 @@ func (s *appServerSession) appServerCommand() (string, []string) {
 	if baseURL := strings.TrimSpace(s.baseURL); baseURL != "" {
 		args = append(args, "-c", fmt.Sprintf("openai_base_url=%q", baseURL))
 	}
+	if override := codexDisabledSkillsOverride(s.disabledSkillPaths); override != "" {
+		args = append(args, "-c", override)
+	}
 	return bin, args
+}
+
+func codexDisabledSkillsOverride(paths []string) string {
+	if len(paths) == 0 {
+		return ""
+	}
+	items := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		quoted, err := json.Marshal(path)
+		if err != nil {
+			continue
+		}
+		items = append(items, fmt.Sprintf("{path=%s,enabled=false}", quoted))
+	}
+	if len(items) == 0 {
+		return ""
+	}
+	return "skills.config=[" + strings.Join(items, ",") + "]"
 }
 
 func (s *appServerSession) connect() error {

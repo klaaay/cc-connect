@@ -21,10 +21,25 @@ type Skill struct {
 // SkillRegistry discovers and caches agent skills from skill directories.
 // Skills are project-level: each Engine has its own SkillRegistry.
 type SkillRegistry struct {
-	mu   sync.RWMutex
-	dirs []string
+	mu       sync.RWMutex
+	dirs     []string
+	disabled map[string]struct{}
 	// cached results; nil means not yet scanned
 	cache []*Skill
+}
+
+// SetDisabledNames configures project-level skill names that must not be
+// registered or resolved. Name matching follows Resolve semantics.
+func (r *SkillRegistry) SetDisabledNames(names []string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.disabled = make(map[string]struct{}, len(names))
+	for _, name := range names {
+		if normalized := normalizeCommandName(strings.TrimSpace(name)); normalized != "" {
+			r.disabled[normalized] = struct{}{}
+		}
+	}
+	r.cache = nil
 }
 
 func NewSkillRegistry() *SkillRegistry {
@@ -78,7 +93,12 @@ func (r *SkillRegistry) ListAll() []*Skill {
 	seen := make(map[string]bool)
 
 	for _, dir := range r.dirs {
-		result = append(result, discoverSkillsInDir(dir, seen)...)
+		for _, skill := range discoverSkillsInDir(dir, seen) {
+			if _, disabled := r.disabled[normalizeCommandName(skill.Name)]; disabled {
+				continue
+			}
+			result = append(result, skill)
+		}
 	}
 
 	r.cache = result

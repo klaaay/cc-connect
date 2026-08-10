@@ -36,6 +36,40 @@ func TestSkillRegistryListAll_FindsDepth1Skills(t *testing.T) {
 	}
 }
 
+func TestSkillRegistryListAll_FiltersProjectDisabledSkills(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, filepath.Join(root, "superpowers-using-superpowers", "SKILL.md"), "Superpowers")
+	writeSkillFile(t, filepath.Join(root, "keep-me", "SKILL.md"), "Keep me")
+
+	r := NewSkillRegistry()
+	r.SetDirs([]string{root})
+	r.SetDisabledNames([]string{"SUPERPOWERS_USING_SUPERPOWERS"})
+
+	skills := r.ListAll()
+	if len(skills) != 1 || skills[0].Name != "keep-me" {
+		t.Fatalf("skills = %#v, want only keep-me", skills)
+	}
+	if r.Resolve("superpowers-using-superpowers") != nil {
+		t.Fatal("project-disabled skill must not resolve")
+	}
+}
+
+func TestSkillRegistrySetDisabledNamesInvalidatesCache(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, filepath.Join(root, "skill-a", "SKILL.md"), "Skill A")
+
+	r := NewSkillRegistry()
+	r.SetDirs([]string{root})
+	if len(r.ListAll()) != 1 {
+		t.Fatal("expected skill before disabling")
+	}
+
+	r.SetDisabledNames([]string{"skill-a"})
+	if len(r.ListAll()) != 0 {
+		t.Fatal("cached skill must disappear after disabling")
+	}
+}
+
 func TestSkillRegistryListAll_IgnoresNestedSkillFiles(t *testing.T) {
 	root := t.TempDir()
 	// Depth-1 skill — should be registered.

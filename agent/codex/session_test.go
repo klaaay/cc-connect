@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -20,6 +21,29 @@ func TestNormalizeReasoningEffort_RejectsMinimal(t *testing.T) {
 	}
 	if got := normalizeReasoningEffort("min"); got != "" {
 		t.Fatalf("normalizeReasoningEffort(min) = %q, want empty", got)
+	}
+}
+
+func TestWithCodexDisabledSkillsArgsAddsProcessOverride(t *testing.T) {
+	got := withCodexDisabledSkillsArgs(
+		[]string{"--existing"},
+		[]string{"/tmp/superpowers/SKILL.md"},
+	)
+	want := []string{
+		"--existing",
+		"-c",
+		`skills.config=[{path="/tmp/superpowers/SKILL.md",enabled=false}]`,
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestWithCodexDisabledSkillsArgsLeavesUnconfiguredProjectUntouched(t *testing.T) {
+	original := []string{"--existing"}
+	got := withCodexDisabledSkillsArgs(original, nil)
+	if !reflect.DeepEqual(got, original) {
+		t.Fatalf("args = %#v, want %#v", got, original)
 	}
 }
 

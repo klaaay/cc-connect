@@ -14,12 +14,15 @@ import (
 	"github.com/chenhg5/cc-connect/core"
 )
 
-func TestAppServerSession_AppServerCommandPreservesCLIProfile(t *testing.T) {
+func TestAppServerSession_AppServerCommandDisablesConfiguredSkills(t *testing.T) {
 	s := &appServerSession{
-		cliBin:       "/opt/custom-codex",
-		cliExtraArgs: []string{"--profile", "cc-connect-no-superpowers"},
-		url:          "stdio://",
-		model:        "gpt-5.6-sol",
+		cliBin: "/opt/custom-codex",
+		url:    "stdio://",
+		model:  "gpt-5.6-sol",
+		disabledSkillPaths: []string{
+			`/Users/example/.codex/skills/superpowers-using-superpowers/SKILL.md`,
+			`/tmp/skill with "quotes"/SKILL.md`,
+		},
 	}
 
 	bin, args := s.appServerCommand()
@@ -28,9 +31,9 @@ func TestAppServerSession_AppServerCommandPreservesCLIProfile(t *testing.T) {
 		t.Fatalf("binary = %q, want /opt/custom-codex", bin)
 	}
 	want := []string{
-		"--profile", "cc-connect-no-superpowers",
 		"app-server", "--listen", "stdio://",
 		"-c", `model="gpt-5.6-sol"`,
+		"-c", `skills.config=[{path="/Users/example/.codex/skills/superpowers-using-superpowers/SKILL.md",enabled=false},{path="/tmp/skill with \"quotes\"/SKILL.md",enabled=false}]`,
 	}
 	if !reflect.DeepEqual(args, want) {
 		t.Fatalf("args = %#v, want %#v", args, want)

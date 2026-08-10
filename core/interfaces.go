@@ -607,6 +607,13 @@ type SkillProvider interface {
 	SkillDirs() []string
 }
 
+// DisabledSkillProvider optionally hides selected project-level skills from
+// cc-connect's registry. The underlying agent is responsible for applying the
+// same policy to its own runtime when it performs independent skill discovery.
+type DisabledSkillProvider interface {
+	DisabledSkillNames() []string
+}
+
 // SessionDeleter is an optional interface for agents that support deleting sessions.
 type SessionDeleter interface {
 	DeleteSession(ctx context.Context, sessionID string) error

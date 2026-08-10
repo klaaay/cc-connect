@@ -27,6 +27,15 @@ func (a *stubAgent) StartSession(_ context.Context, _ string) (AgentSession, err
 func (a *stubAgent) ListSessions(_ context.Context) ([]AgentSessionInfo, error) { return nil, nil }
 func (a *stubAgent) Stop() error                                                { return nil }
 
+type stubSkillPolicyAgent struct {
+	stubAgent
+	dirs     []string
+	disabled []string
+}
+
+func (a *stubSkillPolicyAgent) SkillDirs() []string          { return a.dirs }
+func (a *stubSkillPolicyAgent) DisabledSkillNames() []string { return a.disabled }
+
 type stubAgentSession struct{}
 
 func (s *stubAgentSession) Send(_ string, _ string, _ []ImageAttachment, _ []FileAttachment) error {
@@ -717,6 +726,22 @@ func (a *stubReplyFooterAgent) GetUsage(_ context.Context) (*UsageReport, error)
 
 func newTestEngine() *Engine {
 	return NewEngine("test", &stubAgent{}, []Platform{&stubPlatformEngine{n: "test"}}, "", LangEnglish)
+}
+
+func TestNewEngine_AppliesAgentProjectDisabledSkills(t *testing.T) {
+	root := t.TempDir()
+	writeSkillFile(t, filepath.Join(root, "disabled-skill", "SKILL.md"), "Disabled")
+	writeSkillFile(t, filepath.Join(root, "enabled-skill", "SKILL.md"), "Enabled")
+	agent := &stubSkillPolicyAgent{
+		dirs:     []string{root},
+		disabled: []string{"disabled-skill"},
+	}
+
+	e := NewEngine("test", agent, nil, "", LangEnglish)
+	skills := e.ListSkills()
+	if len(skills) != 1 || skills[0].Name != "enabled-skill" {
+		t.Fatalf("ListSkills() = %#v, want only enabled-skill", skills)
+	}
 }
 
 func TestEngineSendToSessionWithAttachments(t *testing.T) {
