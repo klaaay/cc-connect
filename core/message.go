@@ -353,7 +353,11 @@ type Message struct {
 	Location     *LocationAttachment // geographical location (if any)
 	ExtraContent string              // platform-enriched content (e.g. location text, reply quote) prepended for the agent
 	OnAccepted   func()              // called once when the engine accepts this message for an agent turn
-	ChannelKey   string              // platform-provided channel identifier for workspace binding (optional)
+	OnQueued     func(int)           // called with queue depth when an accepted message must wait for the current turn
+	// SuppressQueueReply is used by trusted system ingress such as silent
+	// webhooks. Ordinary platform messages keep the default queue feedback.
+	SuppressQueueReply bool
+	ChannelKey         string // platform-provided channel identifier for workspace binding (optional)
 	// LegacyChannelKey is the platform-provided channel identifier used by an
 	// older workspace-binding scope. When both keys are set, multi-workspace
 	// routing atomically migrates the legacy binding to ChannelKey.

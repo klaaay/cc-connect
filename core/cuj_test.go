@@ -1142,7 +1142,7 @@ func TestCUJ_A3_ImageReachesAgent(t *testing.T) {
 		agent.mu.Lock()
 		n := len(agent.sessions)
 		agent.mu.Unlock()
-		if n > 0 {
+		if n > 0 && len(plat.getSent()) > 0 {
 			break
 		}
 		select {
@@ -1206,7 +1206,7 @@ func TestCUJ_A5_FileReachesAgent(t *testing.T) {
 		agent.mu.Lock()
 		n := len(agent.sessions)
 		agent.mu.Unlock()
-		if n > 0 {
+		if n > 0 && len(plat.getSent()) > 0 {
 			return
 		}
 		select {
