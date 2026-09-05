@@ -15,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 
+	"github.com/chenhg5/cc-connect/agent/internal/skillroots"
 	"github.com/chenhg5/cc-connect/core"
 )
 
@@ -159,6 +160,8 @@ func normalizeReasoningEffort(raw string) string {
 		return "high"
 	case "xhigh", "x-high", "very-high":
 		return "xhigh"
+	case "max":
+		return "max"
 	default:
 		return ""
 	}
@@ -206,7 +209,7 @@ func (a *Agent) GetReasoningEffort() string {
 }
 
 func (a *Agent) AvailableReasoningEfforts() []string {
-	return []string{"low", "medium", "high", "xhigh"}
+	return []string{"low", "medium", "high", "xhigh", "max"}
 }
 
 func (a *Agent) configuredModels() []core.ModelOption {
@@ -724,12 +727,21 @@ func codexSkillDirs(workDir, explicitCodexHome string) []string {
 	}
 
 	projectDirs := walkUpCodexProjectSkillDirs(workDir, homeDir)
-	userDirs := make([]string, 0, 2)
+	userDirs := make([]string, 0, 4)
 	if codexHome != "" {
-		userDirs = append(userDirs, filepath.Join(codexHome, "skills"))
+		userDirs = append(userDirs,
+			filepath.Join(codexHome, "skills"),
+			// Superpowers installs Codex-compatible skills under this layout.
+			filepath.Join(codexHome, "superpowers", "skills"),
+		)
+		userDirs = append(userDirs, skillroots.Find(filepath.Join(codexHome, "plugins"))...)
 	}
 	if homeDir != "" {
-		userDirs = append(userDirs, filepath.Join(homeDir, ".agents", "skills"))
+		userDirs = append(userDirs,
+			filepath.Join(homeDir, ".agents", "skills"),
+			// Codex deliberately shares Claude-format SKILL.md directories.
+			filepath.Join(homeDir, ".claude", "skills"),
+		)
 	}
 	return uniqueCodexSkillDirs(append(projectDirs, userDirs...))
 }
@@ -747,6 +759,8 @@ func walkUpCodexProjectSkillDirs(workDir, homeDir string) []string {
 		dirs = append(dirs,
 			filepath.Join(current, ".agents", "skills"),
 			filepath.Join(current, ".codex", "skills"),
+			// Keep project-local Claude-format skills portable to Codex.
+			filepath.Join(current, ".claude", "skills"),
 		)
 		if stopAt != "" && sameCodexPath(current, stopAt) {
 			break

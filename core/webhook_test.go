@@ -155,15 +155,16 @@ func TestWebhookServer_PromptReportsStartedAfterAgentAcceptance(t *testing.T) {
 		t.Fatalf("response = %#v, want accepted/started", response)
 	}
 
+	// 先通过带锁的平台快照等待回复，确保后台 Send 已经记录提示词并发出结果。
 	deadline := time.Now().Add(time.Second)
-	for len(agentSession.sentPrompts) == 0 && time.Now().Before(deadline) {
+	for len(platform.getSent()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(time.Millisecond)
-	}
-	if len(agentSession.sentPrompts) != 1 || agentSession.sentPrompts[0] != "dispatch-id=started" {
-		t.Fatalf("sent prompts = %#v", agentSession.sentPrompts)
 	}
 	if got := platform.getSent(); len(got) != 1 || got[0] != "done" {
 		t.Fatalf("silent webhook must suppress only ingress status, not agent result: %#v", got)
+	}
+	if len(agentSession.sentPrompts) != 1 || agentSession.sentPrompts[0] != "dispatch-id=started" {
+		t.Fatalf("sent prompts = %#v", agentSession.sentPrompts)
 	}
 }
 
