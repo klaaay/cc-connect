@@ -202,6 +202,8 @@ const (
 	MsgToolResultFmtOk           MsgKey = "tool_result_fmt_ok"
 	MsgToolResultFmtFailed       MsgKey = "tool_result_fmt_failed"
 	MsgExecutionStopped          MsgKey = "execution_stopped"
+	MsgManagedStopInvalid        MsgKey = "managed_stop_invalid"
+	MsgManagedStopConflict       MsgKey = "managed_stop_conflict"
 	MsgSessionCloseFailed        MsgKey = "session_close_failed"
 	MsgSessionResumeUnsafe       MsgKey = "session_resume_unsafe"
 	MsgSessionCancelled          MsgKey = "session_cancelled"
@@ -761,6 +763,20 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "⏹ 執行已停止。",
 		LangJapanese:           "⏹ 実行を停止しました。",
 		LangSpanish:            "⏹ Ejecución detenida.",
+	},
+	MsgManagedStopInvalid: {
+		LangEnglish:            "POST requires session_key, session_id and request_id.",
+		LangChinese:            "请通过 POST 提供 session_key、session_id 和 request_id。",
+		LangTraditionalChinese: "請透過 POST 提供 session_key、session_id 和 request_id。",
+		LangJapanese:           "POST に session_key、session_id、request_id が必要です。",
+		LangSpanish:            "POST requiere session_key, session_id y request_id.",
+	},
+	MsgManagedStopConflict: {
+		LangEnglish:            "Session changed, request identity conflicts, or another stop is pending.",
+		LangChinese:            "会话已变化、请求身份冲突，或已有停止操作正在处理。",
+		LangTraditionalChinese: "工作階段已變更、請求身分衝突，或已有停止操作正在處理。",
+		LangJapanese:           "セッションが変更されたか、リクエストが競合したか、停止処理中です。",
+		LangSpanish:            "La sesión cambió, la solicitud entra en conflicto o hay una parada pendiente.",
 	},
 	MsgSessionCloseFailed: {
 		LangEnglish:            "⚠️ Warning: the stopped session's background process could not be confirmed killed. It may still be running and using its old credentials.",

@@ -467,8 +467,10 @@ type Engine struct {
 	observeCancel     context.CancelFunc
 
 	// Interactive agent session management
-	interactiveMu     sync.Mutex
-	interactiveStates map[string]*interactiveState // key = sessionKey
+	interactiveMu       sync.Mutex
+	interactiveStates   map[string]*interactiveState // key = sessionKey
+	managedSessionStops map[string]*managedSessionStop
+	activeManagedStops  map[string]*managedSessionStop
 
 	// Teardown tracking. A session's state is removed from interactiveStates
 	// as soon as /stop is issued, but its OS process can live on for up to
@@ -3200,7 +3202,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 
 	// Allow queueing when agentSession is nil (session is starting up,
 	// issue #565). Only reject if the session was established and died.
-	if state.agentSession != nil && !state.agentSession.Alive() {
+	if state.stopped || (state.agentSession != nil && !state.agentSession.Alive()) {
 		return false
 	}
 
@@ -3768,6 +3770,9 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 		agentOverride = agent
 	}
 	state := e.getOrCreateInteractiveStateWith(interactiveKey, p, msg.ReplyCtx, session, sessions, agentOverride, ccSessionKey)
+	if state.isStopped() {
+		return
+	}
 
 	// Set workspaceDir on the state for idle reaper identification
 	if workspaceDir != "" {
@@ -4043,6 +4048,15 @@ func adoptPendingFromPlaceholder(existing, newState *interactiveState) {
 // When agentOverride is non-nil it is used instead of e.agent to start the session.
 // ccSessionKey, when non-empty, is used for CC_SESSION_KEY env injection; otherwise sessionKey is used.
 func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, replyCtx any, session *Session, sessions *SessionManager, agentOverride Agent, ccSessionKey string) *interactiveState {
+	e.interactiveMu.Lock()
+	stopping := e.activeManagedStops[sessionKey] != nil
+	e.interactiveMu.Unlock()
+	if stopping {
+		state := &interactiveState{}
+		state.markStopped()
+		return state
+	}
+
 	// /stop removes the state from the map immediately but tears the process
 	// down in the background. Wait that teardown out *before* taking the lock:
 	// spawning now would start a second process on the same agent session ID
@@ -4052,6 +4066,11 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	e.interactiveMu.Lock()
 	defer e.interactiveMu.Unlock()
 
+	if e.activeManagedStops[sessionKey] != nil {
+		state := &interactiveState{}
+		state.markStopped()
+		return state
+	}
 	state, ok := e.interactiveStates[sessionKey]
 	if ok && state.agentSession != nil && state.agentSession.Alive() {
 		// Verify the running agent session matches the current active session.
@@ -4280,6 +4299,10 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 // agent session is still being shut down (which can take up to 130s for Stop hooks).
 func (e *Engine) cleanupInteractiveState(sessionKey string, expected ...*interactiveState) {
 	e.interactiveMu.Lock()
+	if e.activeManagedStops[sessionKey] != nil {
+		e.interactiveMu.Unlock()
+		return
+	}
 	state, ok := e.interactiveStates[sessionKey]
 	if len(expected) > 0 && expected[0] != nil && state != expected[0] {
 		// Another turn has already replaced the state — skip cleanup.
@@ -4496,6 +4519,12 @@ func (e *Engine) awaitSessionClose(sessionKey string) bool {
 	start := time.Now()
 	waited := false
 	for {
+		e.interactiveMu.Lock()
+		managedStop := e.activeManagedStops[sessionKey] != nil
+		e.interactiveMu.Unlock()
+		if managedStop {
+			return false
+		}
 		e.closingMu.Lock()
 		done := e.closingSessions[sessionKey]
 		e.closingMu.Unlock()
@@ -4586,9 +4615,9 @@ func (e *Engine) closeAgentSessionWithTimeout(sessionKey string, agentSession Ag
 
 // closeAgentSession performs the teardown itself. Callers must have registered
 // the in-flight close (beginSessionClose) first.
-func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession, platform Platform, replyCtx any) {
+func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession, platform Platform, replyCtx any) error {
 	if agentSession == nil {
-		return
+		return nil
 	}
 
 	slog.Debug("cleanupInteractiveState: closing agent session", "session", sessionKey)
@@ -4610,7 +4639,7 @@ func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession,
 			// next turn must not resume into it.
 			e.markUnsafeResume(sessionKey)
 			e.notifySessionCloseFailure(sessionKey, platform, replyCtx, closeErr)
-			return
+			return closeErr
 		}
 		if elapsed := time.Since(closeStart); elapsed >= slowAgentClose {
 			slog.Warn("slow agent session close", "elapsed", elapsed, "session", sessionKey)
@@ -4621,7 +4650,9 @@ func (e *Engine) closeAgentSession(sessionKey string, agentSession AgentSession,
 		e.markUnsafeResume(sessionKey)
 		e.notifySessionCloseFailure(sessionKey, platform, replyCtx,
 			fmt.Errorf("did not respond within %s", closeTimeout))
+		return fmt.Errorf("session close timed out after %s", closeTimeout)
 	}
+	return nil
 }
 
 // notifySessionCloseFailure alerts the chat that owned a session when its
@@ -10344,6 +10375,10 @@ func (e *Engine) stopInteractiveSessionSilently(sessionKey string) bool {
 
 func (e *Engine) stopInteractiveSessionWithOptions(sessionKey string, notifyQueued bool) bool {
 	e.interactiveMu.Lock()
+	if e.activeManagedStops[sessionKey] != nil {
+		e.interactiveMu.Unlock()
+		return false
+	}
 	state, ok := e.interactiveStates[sessionKey]
 	if !ok || state == nil {
 		e.interactiveMu.Unlock()

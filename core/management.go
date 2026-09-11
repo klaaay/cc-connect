@@ -943,6 +943,10 @@ func (m *ManagementServer) handleProjectUsers(w http.ResponseWriter, r *http.Req
 
 func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.Request, projName string, e *Engine, rest string) {
 	// sub-routes like /sessions/switch
+	if rest == "stop" {
+		m.handleProjectSessionStop(w, r, e)
+		return
+	}
 	if rest == "switch" {
 		m.handleProjectSessionSwitch(w, r, e)
 		return

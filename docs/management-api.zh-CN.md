@@ -1171,3 +1171,18 @@ cors_origins = ["http://localhost:3000", "https://dashboard.example.com"]
 - [Bridge 协议](bridge-protocol.md) — 外部平台适配器的 WebSocket 协议
 - [使用指南](usage.md) — 终端用户功能与斜杠命令
 - [config.example.toml](../config.example.toml) — 配置模板
+
+
+### 停止会话当前执行
+
+`POST /api/v1/projects/{project}/sessions/stop` 使用管理 Bearer Token，JSON 示例：
+
+```json
+{ "session_key": "telegram:chat:user", "session_id": "s1", "request_id": "unique-task-stop-id" }
+```
+
+语义与 `/stop` 相同：关闭当前执行、清空该会话待执行消息，保留会话 ID、历史和后续续接能力。此接口目前只支持管理 API 已暴露的项目会话，拒绝工作区会话映射。
+
+关闭尚未完成时返回 HTTP 202、`data.stopped: false`；调用者用相同参数继续轮询。只有进程关闭成功且处理循环退出后，才返回 HTTP 200、`data.stopped: true`。响应同时回传 `data.request_id`。会话身份不符或另一停止操作正在处理时返回 409；关闭失败返回 502，并阻止该槽位再启动进程，需核查服务日志。
+
+`request_id` 必须针对每次任务停止唯一。重复请求复用已有结果，不会停止后来开始的新任务。结果缓存属于当前服务进程；客户端应持久化任务停止状态，不把旧请求用于新任务。

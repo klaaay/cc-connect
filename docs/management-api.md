@@ -1200,3 +1200,18 @@ If not configured, CORS may be disabled or use a default (e.g. `*` for same-orig
 - [Bridge Protocol](bridge-protocol.md) — WebSocket protocol for external platform adapters
 - [Usage Guide](usage.md) — End-user features and slash commands
 - [config.example.toml](../config.example.toml) — Configuration template
+
+
+### Stop current session execution
+
+`POST /api/v1/projects/{project}/sessions/stop` requires management Bearer authentication and JSON:
+
+```json
+{ "session_key": "telegram:chat:user", "session_id": "s1", "request_id": "unique-task-stop-id" }
+```
+
+Like `/stop`, this closes current execution and clears pending messages while preserving the conversation ID and history. Only project sessions exposed by the management API are supported; workspace mappings are rejected.
+
+Poll with the same body while HTTP 202 returns `data.stopped: false`. HTTP 200 with `data.stopped: true` confirms process closure and completion of the processing loop. Responses echo `data.request_id`. Identity conflicts or another pending stop return 409. Close failures return 502 and keep session startup blocked; inspect service logs.
+
+Use a unique `request_id` for each task stop. Repeated requests reuse the result without stopping a newer task. This cache belongs to the current service process; clients must persist their task lifecycle and must not reuse old requests for new tasks.

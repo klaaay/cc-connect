@@ -218,7 +218,9 @@ func newMediaEngine(t *testing.T) (*core.Engine, *recordingAgent, *mediaPlatform
 	t.Helper()
 	agent := newRecordingAgent()
 	platform := &mediaPlatform{}
-	engine := core.NewEngine("release-media", agent, []core.Platform{platform}, t.TempDir()+"/sessions.json", core.LangEnglish)
+	// Media routing tests do not need disk persistence. Background session saves
+	// can otherwise race with TempDir cleanup after the final attachment assertion.
+	engine := core.NewEngine("release-media", agent, []core.Platform{platform}, "", core.LangEnglish)
 	t.Cleanup(func() {
 		engine.Stop()
 		_ = agent.Stop()
