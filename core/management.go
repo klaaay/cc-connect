@@ -1089,6 +1089,7 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 				"role":      h.Role,
 				"content":   h.Content,
 				"timestamp": h.Timestamp,
+				"timing":    h.Timing,
 			}
 		}
 
