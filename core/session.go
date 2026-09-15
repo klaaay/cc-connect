@@ -295,6 +295,12 @@ func (s *Session) GetHistory(n int) []HistoryEntry {
 	}
 	out := make([]HistoryEntry, n)
 	copy(out, s.History[total-n:])
+	for i := range out {
+		if out[i].Timing != nil {
+			value := *out[i].Timing
+			out[i].Timing = &value
+		}
+	}
 	return out
 }
 
