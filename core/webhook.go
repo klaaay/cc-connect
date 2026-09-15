@@ -26,14 +26,15 @@ type WebhookServer struct {
 
 // WebhookRequest is the JSON body for POST /hook.
 type WebhookRequest struct {
-	Event      string `json:"event,omitempty"`    // event name for logging (e.g. "git:commit")
-	Project    string `json:"project,omitempty"`  // target project; optional if single project
-	SessionKey string `json:"session_key"`        // target session key (required)
-	Prompt     string `json:"prompt,omitempty"`   // agent prompt (mutually exclusive with exec)
-	Exec       string `json:"exec,omitempty"`     // shell command (mutually exclusive with prompt)
-	WorkDir    string `json:"work_dir,omitempty"` // working dir for exec
-	Silent     bool   `json:"silent,omitempty"`   // suppress notification
-	Payload    any    `json:"payload,omitempty"`  // arbitrary extra data; appended to prompt context
+	ExpectedPreviousSessionID *string `json:"expected_previous_session_id,omitempty"`
+	Event                     string  `json:"event,omitempty"`    // event name for logging (e.g. "git:commit")
+	Project                   string  `json:"project,omitempty"`  // target project; optional if single project
+	SessionKey                string  `json:"session_key"`        // target session key (required)
+	Prompt                    string  `json:"prompt,omitempty"`   // agent prompt (mutually exclusive with exec)
+	Exec                      string  `json:"exec,omitempty"`     // shell command (mutually exclusive with prompt)
+	WorkDir                   string  `json:"work_dir,omitempty"` // working dir for exec
+	Silent                    bool    `json:"silent,omitempty"`   // suppress notification
+	Payload                   any     `json:"payload,omitempty"`  // arbitrary extra data; appended to prompt context
 }
 
 func NewWebhookServer(port int, token, path string) *WebhookServer {
@@ -145,7 +146,8 @@ func (ws *WebhookServer) handleHook(w http.ResponseWriter, r *http.Request) {
 				prompt += "\n\nContext:\n```json\n" + string(payloadJSON) + "\n```"
 			}
 		}
-		delivery, err := ws.acceptPrompt(engine, req.SessionKey, prompt, req.Silent, eventName)
+		guard := webhookIngressGuard{previousSessionID: req.ExpectedPreviousSessionID}
+		delivery, err := ws.acceptPrompt(engine, req.SessionKey, prompt, req.Silent, eventName, guard)
 		if err != nil {
 			slog.Warn("webhook: prompt rejected", "event", eventName, "session_key", req.SessionKey, "error", err)
 			http.Error(w, "prompt was not accepted: "+err.Error(), http.StatusConflict)
@@ -205,7 +207,12 @@ func (ws *WebhookServer) resolveEngine(project string) (*Engine, error) {
 	return nil, fmt.Errorf("project is required (multiple projects configured)")
 }
 
-func (ws *WebhookServer) acceptPrompt(engine *Engine, sessionKey, prompt string, silent bool, event string) (string, error) {
+type webhookIngressGuard struct {
+	sessionID         string
+	previousSessionID *string
+}
+
+func (ws *WebhookServer) acceptPrompt(engine *Engine, sessionKey, prompt string, silent bool, event string, guards ...webhookIngressGuard) (string, error) {
 	platformName := ""
 	if idx := strings.Index(sessionKey, ":"); idx > 0 {
 		platformName = sessionKey[:idx]
@@ -236,6 +243,7 @@ func (ws *WebhookServer) acceptPrompt(engine *Engine, sessionKey, prompt string,
 	msg := &Message{
 		SessionKey:         sessionKey,
 		Platform:           platformName,
+		InputOrigin:        "automation",
 		UserID:             "webhook",
 		UserName:           "webhook",
 		Content:            prompt,
@@ -249,6 +257,11 @@ func (ws *WebhookServer) acceptPrompt(engine *Engine, sessionKey, prompt string,
 				delivery = "started"
 			}
 		},
+	}
+	if len(guards) > 0 {
+		msg.ExpectedSessionID = guards[0].sessionID
+		msg.ExpectedPreviousSessionID = guards[0].previousSessionID
+		msg.OnRejected = func(reason string) { delivery = "rejected:" + reason }
 	}
 	engine.handleMessage(targetPlatform, msg)
 	if delivery == "" {

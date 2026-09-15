@@ -1118,3 +1118,17 @@ func TestKnownAgentSessionIDs_ResetAllSessionsBug(t *testing.T) {
 	}
 }
 
+func TestSession_HistoryInputOriginPersistsWithoutInferringLegacy(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	manager := NewSessionManager(path)
+	session := manager.GetOrCreateActive("test:origin")
+	session.AddHistory("user", "legacy")
+	session.AddHistoryWithOrigin("user", "human input", "human")
+	session.AddHistoryWithOrigin("user", "automatic prompt", "automation")
+	session.AddHistoryWithOrigin("user", "invalid origin", "untrusted")
+	manager.Save()
+	history := NewSessionManager(path).GetOrCreateActive("test:origin").GetHistory(0)
+	if len(history) != 4 || history[0].Origin != "" || history[1].Origin != "human" || history[2].Origin != "automation" || history[3].Origin != "" {
+		t.Fatalf("origin roundtrip: %#v", history)
+	}
+}

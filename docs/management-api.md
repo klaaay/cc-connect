@@ -6,6 +6,18 @@
 
 ---
 
+## September 2026: pinned session delivery
+
+`POST /api/v1/projects/{project}/sessions/deliver` uses management Bearer authentication. The body contains `session_key`, `session_id`, `request_id`, and `prompt`. It requires persistent storage and a single-workspace project; slash commands are rejected.
+
+The normal `{ "ok": true, "data": ... }` envelope returns `request_id`, `session_id`, `fingerprint`, and `status`: `accepted`, `rejected:session_changed`, `rejected:session_busy`, or `unknown`. A request ID binds the original contents; changing them returns 409. Receipts survive session replacement, `/new`, and restart. Intent is saved before engine admission; a crash may leave `unknown`, which must not be interpreted as permission to resend under another ID.
+
+`lookup_only: true` reads an existing receipt without creating intent or calling the agent. A missing receipt returns `not_found`. This flag is excluded from the fingerprint. Recovery clients should query first, then revalidate their task and version before attempting first delivery only after explicit `not_found`. Network errors do not prove absence.
+
+Session details expose `busy` for execution state; `active` means selected and `live` means interactive state exists. Neither alone proves execution ended. A webhook `/new name` request may include `expected_previous_session_id`; ingress atomically checks the previous selection and requires it to be idle before resetting. An empty string expects no previous session. Multi-workspace projects reject guarded resets. Clients must still confirm the resulting session ID, name, and empty history rather than infer reset success from HTTP status.
+
+Admission does not prove that an agent adopted an answer or completed a task; those require explicit application-level evidence.
+
 ## 1. Overview
 
 The cc-connect Management API is an HTTP-based REST API that enables external applications (web dashboards, TUI clients, GUI desktop apps, Mac tray apps) to manage and monitor cc-connect instances. It complements the existing internal Unix socket API by providing a network-accessible, token-authenticated interface suitable for remote and local management tools.
@@ -1215,3 +1227,10 @@ Like `/stop`, this closes current execution and clears pending messages while pr
 Poll with the same body while HTTP 202 returns `data.stopped: false`. HTTP 200 with `data.stopped: true` confirms process closure and completion of the processing loop. Responses echo `data.request_id`. Identity conflicts or another pending stop return 409. Close failures return 502 and keep session startup blocked; inspect service logs.
 
 Use a unique `request_id` for each task stop. Repeated requests reuse the result without stopping a newer task. This cache belongs to the current service process; clients must persist their task lifecycle and must not reuse old requests for new tasks.
+
+
+### History input provenance
+
+History entries expose ingress-assigned `origin`: `human` for a trusted platform human sender and `automation` for webhook, scheduled, or platform bot input. An empty value on old history means unknown. Telegram callbacks use the same attribution as ordinary messages. Native permission/question inputs are recorded against the actual interactive session before responding to the agent. The `user` role alone does not establish human participation.
+
+State-changing control commands use `CC_CONNECT_CONTROL /<command>` history entries without arguments. Read-only queries do not create participation facts. Legacy card navigation only supplies a session key, so its actions retain unknown origin. Automated control commands are not counted as human input.

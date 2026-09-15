@@ -3220,21 +3220,27 @@ func TestHandlePendingPermission_MultiWorkspaceLookup(t *testing.T) {
 		Resolved:  make(chan struct{}),
 	}
 	session := &recordingAgentSession{}
+	history := &Session{}
 
 	e.interactiveMu.Lock()
 	e.interactiveStates[interactiveKey] = &interactiveState{
-		agentSession: session,
-		pending:      pending,
+		agentSession:   session,
+		historySession: history,
+		pending:        pending,
 	}
 	e.interactiveMu.Unlock()
 
 	p := &stubPlatformEngine{n: "test"}
-	msg := &Message{SessionKey: sessionKey, ReplyCtx: "ctx"}
+	msg := &Message{InputOrigin: "human", SessionKey: sessionKey, ReplyCtx: "ctx"}
 
 	if !e.handlePendingPermission(p, msg, "allow", "") {
 		t.Fatal("expected pending permission to be handled")
 	}
 
+	entries := history.GetHistory(0)
+	if len(entries) != 1 || entries[0].Origin != "human" || entries[0].Content != "allow" {
+		t.Fatalf("control input not attributed: %+v", entries)
+	}
 	e.interactiveMu.Lock()
 	state := e.interactiveStates[interactiveKey]
 	e.interactiveMu.Unlock()

@@ -405,6 +405,11 @@ type LocationAttachment struct {
 
 // Message represents a unified incoming message from any platform.
 type Message struct {
+	InputOrigin               string  // 由可信入口标记 human/automation；文本内容不能设置。
+	ExpectedSessionID         string  // Trusted ingress pins the exact active session; never supplied by platform text.
+	ExpectedPreviousSessionID *string // Guard /new against replacing another or busy session; empty means no prior session.
+	OnRejected                func(string)
+
 	SessionKey   string // unique key for user context, e.g. "feishu:{chatID}:{userID}"
 	Platform     string
 	MessageID    string // platform message ID for tracing
@@ -502,6 +507,7 @@ type Event struct {
 
 // HistoryEntry is one turn in a conversation.
 type HistoryEntry struct {
+	Origin    string    `json:"origin,omitempty"`
 	Role      string    `json:"role"` // "user" or "assistant"
 	Content   string    `json:"content"`
 	Timestamp time.Time `json:"timestamp"`

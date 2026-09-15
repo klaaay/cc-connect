@@ -918,3 +918,51 @@ func TestBridge_SessionMissingParams(t *testing.T) {
 		t.Fatal("expected error without target in switch")
 	}
 }
+
+// Bridge 会话变更必须等待固定会话投递完成身份检查和接纳。
+func TestBridge_SessionMutationsWaitForManagedAdmission(t *testing.T) {
+	for _, action := range []string{"new", "switch", "delete"} {
+		t.Run(action, func(t *testing.T) {
+			bs, _ := startTestBridgeWithREST(t, "tok")
+			key := "test:u1:u1"
+			e := bs.resolveEngineForSessionKey(key, "test-proj").engine
+			first := e.sessions.NewSession(key, "first")
+			e.sessions.NewSession(key, "second")
+			var req *http.Request
+			var handler http.HandlerFunc
+			switch action {
+			case "new":
+				req = httptest.NewRequest(http.MethodPost, "/bridge/sessions", strings.NewReader(`{"session_key":"test:u1:u1","name":"third","project":"test-proj"}`))
+				handler = bs.handleSessions
+			case "switch":
+				req = httptest.NewRequest(http.MethodPost, "/bridge/sessions/switch", strings.NewReader(`{"session_key":"test:u1:u1","target":"`+first.ID+`","project":"test-proj"}`))
+				handler = bs.handleSessionSwitch
+			case "delete":
+				req = httptest.NewRequest(http.MethodDelete, "/bridge/sessions/"+first.ID+"?session_key="+key+"&project=test-proj", nil)
+				handler = bs.handleSessionRoutes
+			}
+			e.managedInputMu.Lock()
+			done := make(chan struct{})
+			recorder := httptest.NewRecorder()
+			go func() { handler(recorder, req); close(done) }()
+			premature := false
+			select {
+			case <-done:
+				premature = true
+			case <-time.After(40 * time.Millisecond):
+			}
+			e.managedInputMu.Unlock()
+			select {
+			case <-done:
+			case <-time.After(time.Second):
+				t.Fatal("mutation failed to resume after admission")
+			}
+			if premature {
+				t.Fatal("Bridge mutated the active session during managed admission")
+			}
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("mutation failed: %s", recorder.Body.String())
+			}
+		})
+	}
+}

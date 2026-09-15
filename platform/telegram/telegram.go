@@ -582,6 +582,13 @@ func (p *Platform) handleMessage(ctx context.Context, msg *models.Message) {
 }
 
 func (p *Platform) dispatchMessage(msg *core.Message, tgMsg *models.Message) {
+	if tgMsg.From != nil {
+		if tgMsg.From.IsBot {
+			msg.InputOrigin = "automation"
+		} else {
+			msg.InputOrigin = "human"
+		}
+	}
 	// Enrich with platform-specific context (reply quotes, location text, etc.)
 	var extras []string
 	if replyText := enrichReplyContent(tgMsg); replyText != "" {
@@ -796,6 +803,10 @@ func (p *Platform) handleCallbackQuery(ctx context.Context, cb *models.CallbackQ
 	chatID := msg.Chat.ID
 	msgID := msg.ID
 	userID := strconv.FormatInt(cb.From.ID, 10)
+	inputOrigin := "human"
+	if cb.From.IsBot {
+		inputOrigin = "automation"
+	}
 
 	if !core.AllowList(p.allowFrom, userID) {
 		slog.Debug("telegram: callback from unauthorized user", "user", userID)
@@ -850,15 +861,16 @@ func (p *Platform) handleCallbackQuery(ctx context.Context, cb *models.CallbackQ
 		}
 
 		p.handler(p, &core.Message{
-			SessionKey: sessionKey,
-			Platform:   "telegram",
-			UserID:     userID,
-			UserName:   userName,
-			ChatName:   chatName,
-			Content:    command,
-			MessageID:  strconv.Itoa(msgID),
-			ChannelKey: channelKey,
-			ReplyCtx:   rctx,
+			InputOrigin: inputOrigin,
+			SessionKey:  sessionKey,
+			Platform:    "telegram",
+			UserID:      userID,
+			UserName:    userName,
+			ChatName:    chatName,
+			Content:     command,
+			MessageID:   strconv.Itoa(msgID),
+			ChannelKey:  channelKey,
+			ReplyCtx:    rctx,
 		})
 		return
 	}
@@ -893,15 +905,16 @@ func (p *Platform) handleCallbackQuery(ctx context.Context, cb *models.CallbackQ
 		}
 
 		p.handler(p, &core.Message{
-			SessionKey: sessionKey,
-			Platform:   "telegram",
-			UserID:     userID,
-			UserName:   userName,
-			ChatName:   chatName,
-			Content:    data,
-			MessageID:  strconv.Itoa(msgID),
-			ChannelKey: channelKey,
-			ReplyCtx:   rctx,
+			InputOrigin: inputOrigin,
+			SessionKey:  sessionKey,
+			Platform:    "telegram",
+			UserID:      userID,
+			UserName:    userName,
+			ChatName:    chatName,
+			Content:     data,
+			MessageID:   strconv.Itoa(msgID),
+			ChannelKey:  channelKey,
+			ReplyCtx:    rctx,
 		})
 		return
 	}
@@ -944,6 +957,7 @@ func (p *Platform) handleCallbackQuery(ctx context.Context, cb *models.CallbackQ
 	}
 
 	p.handler(p, &core.Message{
+		InputOrigin:          inputOrigin,
 		SessionKey:           sessionKey,
 		Platform:             "telegram",
 		UserID:               userID,

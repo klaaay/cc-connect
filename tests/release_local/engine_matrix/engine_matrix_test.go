@@ -299,4 +299,15 @@ func TestUnknownSlashCommandNotifiesThenFallsThroughToAgent(t *testing.T) {
 	if !strings.Contains(records[0].prompt, "/not-a-command keep this request") {
 		t.Fatalf("unknown slash command should fall through to agent, got prompt %q", records[0].prompt)
 	}
+	// Receiving the prompt does not mean the asynchronous turn has finished saving.
+	platform.waitTextContaining(t, "matrix response")
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		session := engine.GetSessions().FindByID(engine.GetSessions().ActiveSessionID(matrixMessage("").SessionKey))
+		if session != nil && !session.Busy() && len(session.GetHistory(0)) >= 2 {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("turn did not finish before test cleanup")
 }
