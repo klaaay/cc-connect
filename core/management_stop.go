@@ -26,6 +26,8 @@ type managedStopRequest struct {
 	RequestID  string `json:"request_id"`
 }
 
+var errManagedStopPending = errors.New("session teardown not yet confirmed")
+
 func (m *ManagementServer) handleProjectSessionStop(w http.ResponseWriter, r *http.Request, e *Engine) {
 	if r.Method != http.MethodPost {
 		mgmtError(w, http.StatusMethodNotAllowed, e.i18n.T(MsgManagedStopInvalid))
@@ -39,6 +41,10 @@ func (m *ManagementServer) handleProjectSessionStop(w http.ResponseWriter, r *ht
 	}
 	stop, err := e.beginManagedSessionStop(body)
 	if err != nil {
+		if errors.Is(err, errManagedStopPending) {
+			mgmtJSON(w, http.StatusAccepted, map[string]any{"stopped": false, "request_id": body.RequestID})
+			return
+		}
 		mgmtError(w, http.StatusConflict, e.i18n.T(MsgManagedStopConflict))
 		return
 	}
@@ -60,6 +66,8 @@ func (m *ManagementServer) handleProjectSessionStop(w http.ResponseWriter, r *ht
 }
 
 func (e *Engine) beginManagedSessionStop(input managedStopRequest) (*managedSessionStop, error) {
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
 	key := e.interactiveKeyForSessionKey(input.SessionKey)
 	// The management session API currently exposes the project's own manager.
 	// Reject a different workspace rather than stopping a similarly named session.
@@ -74,20 +82,34 @@ func (e *Engine) beginManagedSessionStop(input managedStopRequest) (*managedSess
 		}
 		return old, nil
 	}
-	if e.sessions.ActiveSessionID(input.SessionKey) != input.SessionID || e.activeManagedStops[key] != nil {
+	if e.activeManagedStops[key] != nil {
 		return nil, errors.New("session changed or another stop is pending")
 	}
 	e.closingMu.Lock()
 	closing := e.closingSessions[key] != nil || e.unsafeResume[key]
 	e.closingMu.Unlock()
 	if closing {
-		return nil, errors.New("another close is pending or unconfirmed")
+		return nil, errManagedStopPending
 	}
 	session := e.sessions.FindByID(input.SessionID)
-	if session == nil {
+	idToKey, _ := e.sessions.SessionKeyMap()
+	if session == nil || idToKey[input.SessionID] != input.SessionKey {
 		return nil, errors.New("session not found")
 	}
 	stop := &managedSessionStop{sessionKey: key, sessionID: input.SessionID, done: make(chan struct{})}
+	if e.sessions.ActiveSessionID(input.SessionKey) != input.SessionID {
+		// A replaced session can be acknowledged only when its event loop and
+		// all teardown gates have settled. Never stop the current replacement.
+		if session.Busy() || e.interactiveStates[key] != nil {
+			return nil, errManagedStopPending
+		}
+		if e.managedSessionStops == nil {
+			e.managedSessionStops = make(map[string]*managedSessionStop)
+		}
+		e.managedSessionStops[input.RequestID] = stop
+		close(stop.done)
+		return stop, nil
+	}
 	if e.managedSessionStops == nil {
 		e.managedSessionStops = make(map[string]*managedSessionStop)
 	}

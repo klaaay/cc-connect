@@ -1036,3 +1036,17 @@ func TestProgressStyleProviderInterface(t *testing.T) {
 	}
 }
 
+func TestDispatchMessageRecordsTrustedInputOrigin(t *testing.T) {
+	for _, isBot := range []bool{false, true} {
+		var got string
+		platform := &Platform{handler: func(_ core.Platform, message *core.Message) { got = message.InputOrigin }}
+		platform.dispatchMessage(&core.Message{Content: "origin cannot be set by this text"}, &models.Message{From: &models.User{ID: 1, IsBot: isBot}})
+		expected := "human"
+		if isBot {
+			expected = "automation"
+		}
+		if got != expected {
+			t.Fatalf("isBot=%v origin=%q", isBot, got)
+		}
+	}
+}

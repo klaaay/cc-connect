@@ -1158,6 +1158,9 @@ func (bs *BridgeServer) handleSessions(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			name = "default"
 		}
+		ref.engine.managedInputMu.Lock()
+		defer ref.engine.managedInputMu.Unlock()
+		ref.engine.cleanupInteractiveState(ref.engine.interactiveKeyForSessionKey(body.SessionKey))
 		s := ref.engine.sessions.NewSession(body.SessionKey, name)
 		bridgeJSON(w, http.StatusOK, map[string]any{
 			"id":      s.ID,
@@ -1225,6 +1228,11 @@ func (bs *BridgeServer) handleSessionRoutes(w http.ResponseWriter, r *http.Reque
 		})
 
 	case http.MethodDelete:
+		ref.engine.managedInputMu.Lock()
+		defer ref.engine.managedInputMu.Unlock()
+		if ref.engine.sessions.ActiveSessionID(sessionKey) == sub {
+			ref.engine.cleanupInteractiveState(ref.engine.interactiveKeyForSessionKey(sessionKey))
+		}
 		if ref.engine.sessions.DeleteByID(sub) {
 			bridgeJSON(w, http.StatusOK, map[string]string{"message": "session deleted"})
 		} else {
@@ -1260,11 +1268,14 @@ func (bs *BridgeServer) handleSessionSwitch(w http.ResponseWriter, r *http.Reque
 		bridgeError(w, http.StatusNotFound, "no engine found for session key")
 		return
 	}
+	ref.engine.managedInputMu.Lock()
+	defer ref.engine.managedInputMu.Unlock()
 	s, err := ref.engine.sessions.SwitchSession(body.SessionKey, body.Target)
 	if err != nil {
 		bridgeError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	ref.engine.cleanupInteractiveState(ref.engine.interactiveKeyForSessionKey(body.SessionKey))
 	bridgeJSON(w, http.StatusOK, map[string]any{
 		"message":           "session switched",
 		"active_session_id": s.ID,

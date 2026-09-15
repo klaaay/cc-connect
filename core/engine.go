@@ -355,6 +355,9 @@ type RateLimitCfg struct {
 
 // Engine routes messages between platforms and the agent for a single project.
 type Engine struct {
+	managedInputMu   sync.Mutex
+	managedRequestMu sync.Mutex
+
 	name                  string
 	agent                 Agent
 	platforms             []Platform
@@ -522,6 +525,7 @@ type workspaceInitFlow struct {
 // The message is NOT sent to agent stdin at queue time; the event loop
 // sends it after the current turn completes to avoid mid-turn interference.
 type queuedMessage struct {
+	inputOrigin       string
 	messageID         string
 	platform          Platform
 	replyCtx          any
@@ -539,6 +543,8 @@ type queuedMessage struct {
 
 // interactiveState tracks a running interactive agent session and its permission state.
 type interactiveState struct {
+	historySession           *Session
+	historyManager           *SessionManager
 	agentSession             AgentSession
 	platform                 Platform
 	replyCtx                 any
@@ -1580,6 +1586,7 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 	msg := &Message{
 		SessionKey:   sessionKey,
 		Platform:     platformName,
+		InputOrigin:  "automation",
 		UserID:       "cron",
 		UserName:     "cron",
 		Content:      content,
@@ -1783,6 +1790,7 @@ func (e *Engine) ExecuteTimerJob(job *TimerJob) error {
 	msg := &Message{
 		SessionKey:   sessionKey,
 		Platform:     platformName,
+		InputOrigin:  "automation",
 		UserID:       "timer",
 		UserName:     "timer",
 		Content:      content,
@@ -2297,12 +2305,13 @@ func (e *Engine) ExecuteHeartbeat(sessionKey, prompt string, silent bool) error 
 	}
 
 	msg := &Message{
-		SessionKey: sessionKey,
-		Platform:   platformName,
-		UserID:     "heartbeat",
-		UserName:   "heartbeat",
-		Content:    prompt,
-		ReplyCtx:   replyCtx,
+		SessionKey:  sessionKey,
+		Platform:    platformName,
+		InputOrigin: "automation",
+		UserID:      "heartbeat",
+		UserName:    "heartbeat",
+		Content:     prompt,
+		ReplyCtx:    replyCtx,
 	}
 
 	session := e.sessions.GetOrCreateActive(sessionKey)
@@ -2912,6 +2921,17 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		}
 	}
 
+	// 路由身份与会话 ID 一起受保护；不同 SessionManager 的 s1 并非同一会话。
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
+	if (msg.ExpectedSessionID != "" || msg.ExpectedPreviousSessionID != nil) &&
+		(e.multiWorkspace || e.sendWorkDirForSession(msg.SessionKey) != "") {
+		if msg.OnRejected != nil {
+			msg.OnRejected("session_changed")
+		}
+		return
+	}
+
 	// Multi-workspace resolution
 	var wsAgent Agent
 	var wsSessions *SessionManager
@@ -2982,6 +3002,34 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		interactiveKey = resolvedWorkspace + ":" + msg.SessionKey
 	}
 
+	if expected := msg.ExpectedPreviousSessionID; expected != nil {
+		if sessions != e.sessions || !strings.HasPrefix(content, "/new ") || sessions.ActiveSessionID(msg.SessionKey) != *expected {
+			if msg.OnRejected != nil {
+				msg.OnRejected("session_changed")
+			}
+			return
+		}
+		if current := sessions.FindByID(*expected); *expected != "" && current != nil && current.Busy() {
+			if msg.OnRejected != nil {
+				msg.OnRejected("session_busy")
+			}
+			return
+		}
+	}
+	if msg.ExpectedSessionID != "" {
+		if sessions != e.sessions || sessions.ActiveSessionID(msg.SessionKey) != msg.ExpectedSessionID || strings.HasPrefix(content, "/") {
+			if msg.OnRejected != nil {
+				msg.OnRejected("session_changed")
+			}
+			return
+		}
+		if current := sessions.FindByID(msg.ExpectedSessionID); current == nil || current.Busy() {
+			if msg.OnRejected != nil {
+				msg.OnRejected("session_busy")
+			}
+			return
+		}
+	}
 	if len(msg.Images) == 0 && strings.HasPrefix(content, "/") {
 		if e.handleCommand(p, msg, content) {
 			return
@@ -3021,6 +3069,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 			slog.Info("audit: command_executed",
 				"user_id", msg.UserID, "platform", msg.Platform,
 				"project", e.name, "command", "shell")
+			e.recordControlInput(p, msg, "shell")
 			e.cmdShell(p, msg, "/shell "+shellCmd)
 			return
 		}
@@ -3109,7 +3158,7 @@ func runMessageAccepted(msg *Message) {
 }
 
 func (e *Engine) maybeAutoResetSessionOnIdle(p Platform, msg *Message, sessions *SessionManager, interactiveKey string, session *Session) *Session {
-	if e.resetOnIdle <= 0 || session == nil {
+	if msg.ExpectedSessionID != "" || e.resetOnIdle <= 0 || session == nil {
 		return nil
 	}
 
@@ -3224,6 +3273,7 @@ func (e *Engine) queueMessageForBusySession(p Platform, msg *Message, interactiv
 		return true // handled: queue-full reply sent
 	}
 	state.pendingMessages = append(state.pendingMessages, queuedMessage{
+		inputOrigin:       msg.InputOrigin,
 		messageID:         msg.MessageID,
 		platform:          p,
 		replyCtx:          msg.ReplyCtx,
@@ -3415,6 +3465,14 @@ func (e *Engine) handlePendingPermission(p Platform, msg *Message, content strin
 		return false
 	}
 found:
+	// Persist consumed control inputs before responding, bound to the actual
+	// interactive session (including cron/workspace sessions), not the current selection.
+	if state.historySession != nil && strings.TrimSpace(content) != "" {
+		state.historySession.AddHistoryWithOrigin("user", content, msg.InputOrigin)
+		if state.historyManager != nil {
+			state.historyManager.Save()
+		}
+	}
 
 	// AskUserQuestion: interpret user response as an answer, not a permission decision
 	if len(pending.Questions) > 0 {
@@ -3758,7 +3816,7 @@ func (e *Engine) processInteractiveMessageWith(p Platform, msg *Message, session
 	turnStart := time.Now()
 
 	e.i18n.DetectAndSet(msg.Content)
-	session.AddHistory("user", msg.Content)
+	session.AddHistoryWithOrigin("user", msg.Content, msg.InputOrigin)
 	// Persist user message immediately so crashes between user input and
 	// assistant reply don't lose it (the assistant-side Save below depends
 	// on the turn completing without a process crash).
@@ -4263,6 +4321,8 @@ func (e *Engine) getOrCreateInteractiveStateWith(sessionKey string, p Platform, 
 	}
 
 	newState := &interactiveState{
+		historySession:   session,
+		historyManager:   sessions,
 		agentSession:     agentSession,
 		platform:         p,
 		replyCtx:         replyCtx,
@@ -6245,7 +6305,7 @@ func (e *Engine) processInteractiveEvents(state *interactiveState, session *Sess
 					e.send(queued.platform, queued.replyCtx, replyContent)
 				}
 
-				session.AddHistory("user", queued.content)
+				session.AddHistoryWithOrigin("user", queued.content, queued.inputOrigin)
 				// Persist queued user message immediately (mirror of the
 				// initial AddHistory("user",...) save above).
 				sessions.Save()
@@ -6503,7 +6563,7 @@ func (e *Engine) drainPendingMessages(state *interactiveState, session *Session,
 
 		drainEvents(as.Events())
 
-		session.AddHistory("user", queued.content)
+		session.AddHistoryWithOrigin("user", queued.content, queued.inputOrigin)
 
 		sendDone := make(chan error, 1)
 		go func() {
@@ -6709,6 +6769,9 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 	args := parts[1:]
 
 	cmdID := matchPrefix(cmd, builtinCommands)
+	if cmdID != "" {
+		e.recordControlInput(p, msg, cmdID, args...)
+	}
 
 	// Resolve effective disabled commands: role-based if available, else project-level
 	e.userRolesMu.RLock()
@@ -6839,6 +6902,7 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 		e.cmdPs(p, msg, args)
 	default:
 		if custom, ok := e.commands.Resolve(cmd); ok {
+			e.recordControlInput(p, msg, "custom")
 			if disabledCmds[strings.ToLower(custom.Name)] {
 				slog.Info("audit: command_blocked",
 					"user_id", msg.UserID, "platform", msg.Platform,
@@ -6853,6 +6917,7 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 			return true
 		}
 		if skill := e.skills.Resolve(cmd); skill != nil {
+			e.recordControlInput(p, msg, "skill")
 			if disabledCmds[strings.ToLower(skill.Name)] {
 				slog.Info("audit: command_blocked",
 					"user_id", msg.UserID, "platform", msg.Platform,
@@ -7126,7 +7191,7 @@ func (e *Engine) cmdNew(p Platform, msg *Message, args []string) {
 	// Clear old session's agent session ID so it cannot be resumed
 	old := sessions.GetOrCreateActive(msg.SessionKey)
 	old.SetAgentSessionID("", "")
-	old.ClearHistory()
+	// 新会话隔离执行上下文；旧会话历史仍用于原任务需求和结果追溯。
 	sessions.Save()
 
 	name := ""
@@ -11311,6 +11376,8 @@ type sendTarget struct {
 }
 
 func (e *Engine) SendToSessionInWorkDir(sessionKey, message string, images []ImageAttachment, files []FileAttachment, workDir string, atUsers []string, atAll bool) error {
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
 	if message == "" && len(images) == 0 && len(files) == 0 {
 		return fmt.Errorf("message or attachment is required")
 	}
@@ -12279,6 +12346,9 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 }
 
 func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
+	e.recordLegacyCardInput("/model", args, sessionKey)
 	agent, sessions := e.sessionContextForKey(sessionKey)
 	switcher, ok := agent.(ModelSwitcher)
 	if !ok {
@@ -12348,6 +12418,9 @@ func workspaceFromInteractiveKey(interactiveKey, sessionKey string) string {
 // executeCardAction performs the side-effect for act: prefixed actions
 // (e.g. switching model/mode/lang) before the card is re-rendered.
 func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
+	e.recordLegacyCardInput(cmd, args, sessionKey)
 	interactiveKey := e.interactiveKeyForSessionKey(sessionKey)
 
 	switch cmd {

@@ -145,10 +145,10 @@ type GlobalProviderInfo struct {
 		Model string `json:"model"`
 		Alias string `json:"alias,omitempty"`
 	} `json:"models,omitempty"`
-	Endpoints       map[string]string              `json:"endpoints,omitempty"`
-	AgentModels     map[string]string              `json:"agent_models,omitempty"`
-	AgentModelLists map[string][]GlobalModelEntry   `json:"agent_model_lists,omitempty"`
-	Codex           *GlobalCodexConfig              `json:"codex,omitempty"`
+	Endpoints       map[string]string             `json:"endpoints,omitempty"`
+	AgentModels     map[string]string             `json:"agent_models,omitempty"`
+	AgentModelLists map[string][]GlobalModelEntry `json:"agent_model_lists,omitempty"`
+	Codex           *GlobalCodexConfig            `json:"codex,omitempty"`
 }
 
 // GlobalModelEntry is a model entry inside AgentModelLists.
@@ -412,9 +412,9 @@ func (m *ManagementServer) handleStatus(w http.ResponseWriter, r *http.Request) 
 				info := ph.PlatformHealth()
 				if info.Degraded {
 					entry := map[string]any{
-						"name":    info.Name,
-						"reason":  info.DegradedReason,
-						"since":   info.DegradedSince,
+						"name":   info.Name,
+						"reason": info.DegradedReason,
+						"since":  info.DegradedSince,
 					}
 					degradedEntries = append(degradedEntries, entry)
 				}
@@ -943,6 +943,10 @@ func (m *ManagementServer) handleProjectUsers(w http.ResponseWriter, r *http.Req
 
 func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.Request, projName string, e *Engine, rest string) {
 	// sub-routes like /sessions/switch
+	if rest == "deliver" {
+		m.handleManagedDelivery(w, r, e)
+		return
+	}
 	if rest == "stop" {
 		m.handleProjectSessionStop(w, r, e)
 		return
@@ -1031,6 +1035,8 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 			SessionKey string `json:"session_key"`
 			Name       string `json:"name"`
 		}
+		e.managedInputMu.Lock()
+		defer e.managedInputMu.Unlock()
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 			mgmtError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 			return
@@ -1057,6 +1063,10 @@ func (m *ManagementServer) handleProjectSessions(w http.ResponseWriter, r *http.
 }
 
 func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *http.Request, e *Engine, sessionID string) {
+	if r.Method == http.MethodDelete {
+		e.managedInputMu.Lock()
+		defer e.managedInputMu.Unlock()
+	}
 	switch r.Method {
 	case http.MethodGet:
 		s := e.sessions.FindByID(sessionID)
@@ -1075,6 +1085,7 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 		histJSON := make([]map[string]any, len(hist))
 		for i, h := range hist {
 			histJSON[i] = map[string]any{
+				"origin":    h.Origin,
 				"role":      h.Role,
 				"content":   h.Content,
 				"timestamp": h.Timestamp,
@@ -1098,6 +1109,7 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 			"active":           activeIDs[s.ID],
 			"live":             live,
 			"history_count":    len(s.History),
+			"busy":             s.busy,
 			"created_at":       s.CreatedAt,
 			"updated_at":       s.UpdatedAt,
 			"history":          histJSON,
@@ -1126,6 +1138,8 @@ func (m *ManagementServer) handleProjectSessionDetail(w http.ResponseWriter, r *
 }
 
 func (m *ManagementServer) handleProjectSessionSwitch(w http.ResponseWriter, r *http.Request, e *Engine) {
+	e.managedInputMu.Lock()
+	defer e.managedInputMu.Unlock()
 	if r.Method != http.MethodPost {
 		mgmtError(w, http.StatusMethodNotAllowed, "POST only")
 		return
@@ -1147,6 +1161,7 @@ func (m *ManagementServer) handleProjectSessionSwitch(w http.ResponseWriter, r *
 		mgmtError(w, http.StatusNotFound, err.Error())
 		return
 	}
+	e.cleanupInteractiveState(e.interactiveKeyForSessionKey(body.SessionKey))
 	mgmtJSON(w, http.StatusOK, map[string]any{
 		"message":           "active session switched",
 		"active_session_id": s.ID,
@@ -1946,10 +1961,10 @@ func (m *ManagementServer) handleCCSwitchProviders(w http.ResponseWriter, r *htt
 // applying per-agent-type overrides for base_url, model, and models.
 func resolveGlobalProviderForAgent(g GlobalProviderInfo, agentType string) ProviderConfig {
 	pc := ProviderConfig{
-		Name:   g.Name,
-		APIKey: g.APIKey,
+		Name:    g.Name,
+		APIKey:  g.APIKey,
 		BaseURL: g.BaseURL,
-		Model:  g.Model,
+		Model:   g.Model,
 	}
 	if ep, ok := g.Endpoints[agentType]; ok && ep != "" {
 		pc.BaseURL = ep

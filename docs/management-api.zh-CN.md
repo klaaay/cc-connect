@@ -6,6 +6,18 @@
 
 ---
 
+## 2026-09：固定会话的可靠投递扩展
+
+`POST /api/v1/projects/{project}/sessions/deliver` 使用管理 API 的 Bearer 鉴权。请求为 `{ "session_key": "telegram:1:1", "session_id": "s1", "request_id": "稳定请求标识", "prompt": "原始内容" }`，仅支持已启用持久化的单工作区项目，不接收斜杠命令。
+
+响应沿用 `{ "ok": true, "data": ... }`，`data` 包含 `request_id`、`session_id`、`fingerprint` 和 `status`。状态为 `accepted`、`rejected:session_changed`、`rejected:session_busy` 或 `unknown`。同一请求标识绑定完整原始内容，不同内容返回 409；已保存的结果在切换会话、`/new` 和进程重启后仍返回原结果，不重复运行 Agent。接收意图先保存，崩溃可能留下 `unknown`，此状态不能当作未接收而自动重新发送。
+
+设置 `lookup_only: true` 仅查询回执，不创建意图、不调用 Agent；没有记录返回 `not_found`。查询标记不参与内容指纹。恢复方先查回执；只有明确 `not_found` 且重新验证本地任务、问题和版本后才可尝试首次投递。网络错误不等于 `not_found`。
+
+会话详情新增 `busy`，表示正在执行；`active` 仅表示当前选中，`live` 表示存在交互状态，均不能单独证明执行结束。Webhook `/hook` 的 `/new 名称` 请求可附 `expected_previous_session_id`：处理入口在同一同步锁内确认旧 ID 未变化且空闲后才执行。空字符串表示预期没有旧会话；多工作区不接受此保护模式。调用方仍须读取新 ID、名称与空历史确认结果，不能仅凭 HTTP 状态认定 `/new` 完成。
+
+该扩展只保证会话接收身份与去重，不证明 Agent 已采用回答或任务已经完成。调用方仍须读取明确的业务确认标记。
+
 ## 1. 概述
 
 cc-connect 管理 API 是基于 HTTP 的 REST API，供外部应用（Web 控制台、TUI 客户端、GUI 桌面应用、Mac 托盘应用等）管理和监控 cc-connect 实例。它是对现有内部 Unix 套接字 API 的补充，提供可通过网络访问、基于令牌认证的接口，适用于远程和本地管理工具。
@@ -1186,3 +1198,10 @@ cors_origins = ["http://localhost:3000", "https://dashboard.example.com"]
 关闭尚未完成时返回 HTTP 202、`data.stopped: false`；调用者用相同参数继续轮询。只有进程关闭成功且处理循环退出后，才返回 HTTP 200、`data.stopped: true`。响应同时回传 `data.request_id`。会话身份不符或另一停止操作正在处理时返回 409；关闭失败返回 502，并阻止该槽位再启动进程，需核查服务日志。
 
 `request_id` 必须针对每次任务停止唯一。重复请求复用已有结果，不会停止后来开始的新任务。结果缓存属于当前服务进程；客户端应持久化任务停止状态，不把旧请求用于新任务。
+
+
+### 历史输入来源
+
+历史条目 `origin` 由入口赋值：`human` 表示可信平台真人输入，`automation` 表示 webhook、定时任务或平台机器人输入。旧历史为空，不能推断为真人。Telegram 按钮与普通消息使用相同来源语义；原生权限/问答输入绑定实际交互会话，在向 Agent 回应之前归档。`role: user` 本身不代表人工参与。
+
+有状态控制命令的历史条目使用 `CC_CONNECT_CONTROL /<命令>`，省略参数。纯查询不产生人工动作；旧卡片导航接口只提供会话键，因此其变更动作保留未知 origin，不能推断为真人。自动投递的控制命令不计人工。

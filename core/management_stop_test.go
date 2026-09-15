@@ -85,6 +85,34 @@ func TestManagementStopRejectsWrongSession(t *testing.T) {
 	}
 }
 
+func TestManagementStopConfirmsReplacedIdleSessionWithoutStoppingNewOne(t *testing.T) {
+	m, _, e := testManagementServer(t, "secret")
+	defer e.cancel()
+	previous := e.sessions.GetOrCreateActive("test:user1")
+	next := e.sessions.NewSession("test:user1", "replacement")
+	if r := requestManagedStop(m, previous.ID); r.Code != 200 {
+		t.Fatalf("old idle session: %d %s", r.Code, r.Body.String())
+	}
+	if e.sessions.ActiveSessionID("test:user1") != next.ID {
+		t.Fatal("replacement selection changed")
+	}
+}
+
+func TestManagementStopReplacedBusySessionRemainsPending(t *testing.T) {
+	m, _, e := testManagementServer(t, "secret")
+	defer e.cancel()
+	previous := e.sessions.GetOrCreateActive("test:user1")
+	previous.TryLock()
+	e.sessions.NewSession("test:user1", "replacement")
+	if r := requestManagedStop(m, previous.ID); r.Code != 202 {
+		t.Fatalf("busy old session must remain pending: %d", r.Code)
+	}
+	previous.Unlock()
+	if r := requestManagedStop(m, previous.ID); r.Code != 200 {
+		t.Fatalf("settled old session: %d", r.Code)
+	}
+}
+
 type failingManagedCloseSession struct{ AgentSession }
 
 func (s *failingManagedCloseSession) Close() error { return errors.New("close failed") }

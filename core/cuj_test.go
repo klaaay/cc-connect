@@ -30,8 +30,11 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -245,13 +248,14 @@ func (env *cujEnv) userSends(userID, content string) string {
 	env.t.Helper()
 	sessionKey := "test:" + userID
 	msg := &Message{
-		SessionKey: sessionKey,
-		Platform:   "test",
-		MessageID:  "msg-" + content[:min(8, len(content))],
-		UserID:     userID,
-		UserName:   userID,
-		Content:    content,
-		ReplyCtx:   "ctx-" + userID,
+		InputOrigin: "human",
+		SessionKey:  sessionKey,
+		Platform:    "test",
+		MessageID:   "msg-" + content[:min(8, len(content))],
+		UserID:      userID,
+		UserName:    userID,
+		Content:     content,
+		ReplyCtx:    "ctx-" + userID,
 	}
 	env.engine.ReceiveMessage(plat(env.plat), msg)
 	return sessionKey
@@ -2013,7 +2017,9 @@ func TestCUJ_H2_TwoPlatformsConcurrentNoBleed(t *testing.T) {
 				userB++
 			}
 		}
-		if userA >= 5 && userB >= 5 {
+		// 入站消息已记录不代表最后一轮已经结束；等回复持久化与忙状态释放后再清理目录。
+		if userA >= 5 && userB >= 5 && len(histA) >= 10 && len(histB) >= 10 &&
+			!e.sessions.GetOrCreateActive("platA:userA").Busy() && !e.sessions.GetOrCreateActive("platB:userB").Busy() {
 			break
 		}
 		select {
@@ -2410,5 +2416,69 @@ func TestCUJ_H4_FeishuTopicsKeepWorkspaceBindingsIsolated(t *testing.T) {
 	sendTopicCommand("om_root_b", "/workspace")
 	if got := lastReply(); !strings.Contains(got, normalizeWorkspacePath(workspaceB)) {
 		t.Fatalf("topic B changed after topic A unbind: %q", got)
+	}
+}
+
+// CUJ-B13 · Managed answers stay with the original task across /new and restart.
+func TestCUJ_B13_ManagedAnswerHistorySurvivesNewAndRestart(t *testing.T) {
+	env := newCUJEnv(t)
+	env.engine.platforms = []Platform{&cujReplyCtxPlatform{env.plat}}
+	key := env.userSends("b13", "original task question")
+	original := env.activeSession(key)
+	env.waitFor("original question persisted", 2*time.Second, func() bool {
+		return original.HistoryLen() == 2 && !original.Busy()
+	})
+	request := managedDeliveryRequest{SessionKey: key, SessionID: original.ID, RequestID: "admin-answer-b13", Prompt: "Desktop only; preserve Web"}
+	_, receipt := managedPost(t, env.engine, request)
+	if receipt.Status != "accepted" {
+		t.Fatalf("answer not accepted: %#v", receipt)
+	}
+	env.waitFor("answer and reply visible in original history", 2*time.Second, func() bool {
+		return original.HistoryLen() == 4 && !original.Busy()
+	})
+	if history := original.GetHistory(0); history[0].Origin != "human" || history[2].Origin != "automation" {
+		t.Fatalf("trusted input origins missing: %#v", history)
+	}
+	env.plat.clearSent()
+	env.userSends("b13", "/history")
+	env.waitFor("user can read answer", 2*time.Second, func() bool { return env.sentContains(request.Prompt) })
+	env.userSends("b13", "/new following-task")
+	next := env.activeSession(key)
+	if next.ID == original.ID || next.HistoryLen() != 0 || original.HistoryLen() != 5 {
+		t.Fatal("new task lost original history or inherited old messages")
+	}
+
+	// A new engine loads the real persisted sessions and receipt files.
+	restoredPlatform := &cujReplyCtxPlatform{&stubPlatformEngine{n: "test"}}
+	restored := NewEngine("test", &cujAgent{}, []Platform{restoredPlatform}, env.tempDir+"/sessions.json", LangEnglish)
+	_, duplicate := managedPost(t, restored, request)
+	if duplicate != receipt {
+		t.Fatal("duplicate answer lost its receipt after restart")
+	}
+	request.RequestID = "stale-answer-b13"
+	_, rejected := managedPost(t, restored, request)
+	if rejected.Status != "rejected:session_changed" {
+		t.Fatal("stale answer was delivered to a different task")
+	}
+	if restored.sessions.GetOrCreateActive(key).HistoryLen() != 0 {
+		t.Fatal("next task received an old answer")
+	}
+	env.engine, env.plat = restored, restoredPlatform.stubPlatformEngine
+	env.userSends("b13", "/history")
+	env.waitFor("new task has no previous messages", 2*time.Second, func() bool { return env.sentContains("No history") })
+	// Admin opens the archived task's original session through its public API.
+	requestHistory := httptest.NewRequest(http.MethodGet, "/api/v1/projects/test/sessions/"+original.ID+"?history_limit=100", nil)
+	response := httptest.NewRecorder()
+	(&ManagementServer{}).handleProjectSessionDetail(response, requestHistory, restored, original.ID)
+	var detail struct {
+		Data struct {
+			History []HistoryEntry `json:"history"`
+		} `json:"data"`
+	}
+	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &detail) != nil || len(detail.Data.History) != 5 {
+		t.Fatalf("archived task history missing after restart: %s", response.Body.String())
+	}
+	if detail.Data.History[0].Content != "original task question" || detail.Data.History[2].Content != "Desktop only; preserve Web" {
+		t.Fatal("archived task lost the original question or duplicated its answer")
 	}
 }
