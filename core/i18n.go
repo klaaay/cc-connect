@@ -834,19 +834,12 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "Webhook Notifier · ヘルプ",
 		LangSpanish:            "Webhook Notifier · Ayuda",
 	},
-	"wn_environment": {
-		LangEnglish:            "Select environment",
-		LangChinese:            "请选择部署环境",
-		LangTraditionalChinese: "請選擇部署環境",
-		LangJapanese:           "環境を選択",
-		LangSpanish:            "Selecciona el entorno",
-	},
-	"wn_target": {
-		LangEnglish:            "Select application",
-		LangChinese:            "请选择部署应用",
-		LangTraditionalChinese: "請選擇部署應用",
-		LangJapanese:           "アプリを選択",
-		LangSpanish:            "Selecciona la aplicación",
+	MsgWNDeployOption: {
+		LangEnglish:            "Deploy %s %s",
+		LangChinese:            "部署 %s %s",
+		LangTraditionalChinese: "部署 %s %s",
+		LangJapanese:           "%s %s をデプロイ",
+		LangSpanish:            "Desplegar %s %s",
 	},
 	"wn_status_queued": {
 		LangEnglish:            "Queued",
@@ -4797,6 +4790,7 @@ func (i *I18n) Tf(key MsgKey, args ...interface{}) string {
 const (
 	MsgWNUnavailable     MsgKey = "wn_unavailable"
 	MsgWNHumanOnly       MsgKey = "wn_human_only"
+	MsgWNDeployOption    MsgKey = "wn_deploy_option"
 	MsgWNHelp            MsgKey = "wn_help_text"
 	MsgWNQueryFailed     MsgKey = "wn_query_failed"
 	MsgWNDisabled        MsgKey = "wn_disabled"

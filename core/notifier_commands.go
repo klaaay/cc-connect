@@ -25,7 +25,7 @@ type notifierSelection struct {
 	stage       string
 	page        int
 	tasks       []notifierTask
-	deployments []notifierDeployment
+	deployments []notifierDeploymentChoice
 	runs        []notifierRun
 	task        notifierTask
 	deployment  notifierDeployment
@@ -89,7 +89,7 @@ func (e *Engine) cmdNotifier(p Platform, msg *Message, command string) {
 			return
 		}
 		s.tasks = catalog.Tasks
-		s.deployments = catalog.Deployments
+		s.deployments = notifierDeploymentChoices(catalog.Deployments)
 	}
 	n.selections[notifierSelectionKey(p, msg)] = s
 	e.reply(p, msg.ReplyCtx, e.notifierMenu(s))
@@ -107,22 +107,14 @@ func (e *Engine) notifierMenu(s *notifierSelection) string {
 		}
 	case "wn_deploy":
 		for _, d := range s.deployments {
-			lines = append(lines, d.Label+" · "+d.Branch+" · "+d.TaskID)
+			lines = append(lines, e.notifierDeploymentLabel(d))
 		}
 	case "wn_runs":
 		for _, r := range s.runs {
 			lines = append(lines, r.Label+" · "+e.notifierStatus(r.Status))
 		}
-	case "environment":
-		lines = s.deployment.Environments
-	case "target":
-		lines = s.deployment.Targets
 	}
-	titleKey := s.stage
-	if titleKey == "environment" || titleKey == "target" {
-		titleKey = "wn_" + titleKey
-	}
-	title := e.i18n.T(MsgKey(titleKey))
+	title := e.i18n.T(MsgKey(s.stage))
 	if len(lines) == 0 {
 		return title + "\n" + e.i18n.T(MsgWNEmpty)
 	}
@@ -186,10 +178,6 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		count = len(s.deployments)
 	case "wn_runs":
 		count = len(s.runs)
-	case "environment":
-		count = len(s.deployment.Environments)
-	case "target":
-		count = len(s.deployment.Targets)
 	}
 	if text == "下一页" || text == "next" {
 		if (s.page+1)*notifierPageSize < count {
@@ -227,18 +215,11 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		s.stage = "submitted"
 		e.submitNotifierTask(p, msg, s)
 	case "wn_deploy":
-		s.deployment = s.deployments[index]
-		s.stage = "environment"
-		s.page = 0
-		e.reply(p, msg.ReplyCtx, e.notifierMenu(s))
-	case "environment":
-		s.environment = s.deployment.Environments[index]
-		s.stage = "target"
-		s.page = 0
-		e.reply(p, msg.ReplyCtx, e.notifierMenu(s))
-	case "target":
+		choice := s.deployments[index]
+		s.deployment = choice.notifierDeployment
+		s.environment = choice.environment
 		s.stage = "submitted"
-		e.submitNotifierDeployment(p, msg, s, s.deployment.Targets[index])
+		e.submitNotifierDeployment(p, msg, s, choice.target)
 	case "wn_runs":
 		r := s.runs[index]
 		current, err := n.client.run(e.ctx, r.Kind, r.ID)

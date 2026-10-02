@@ -2522,23 +2522,35 @@ func TestCUJ_WN1_NumberedTasksPreserveSnapshotAndPin(t *testing.T) {
 	}
 }
 func TestCUJ_WN2_DeploymentSequenceAndCandidate(t *testing.T) {
-	env := newCUJEnv(t)
-	state, cfg := newNotifierTestServer(t)
-	env.engine.SetAdminFrom("alice")
-	if err := env.engine.SetNotifier(cfg); err != nil {
-		t.Fatal(err)
-	}
-	defer env.engine.cancel()
-	for _, text := range []string{"/wn_deploy", "1", "1", "2"} {
-		env.userSends("alice", text)
-	}
-	if !strings.Contains(env.lastSent(), "qa · hub") {
-		t.Fatal(env.lastSent())
-	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	if len(state.writes) != 1 || state.writes[0]["environment"] != "qa" || state.writes[0]["target"] != "hub" || state.writes[0]["candidateSha"] != strings.Repeat("a", 40) {
-		t.Fatal(state.writes)
+	for _, tc := range []struct{ number, environment, target string }{
+		{"1", "qa", "web"}, {"2", "qa", "hub"}, {"3", "prod", "web"}, {"4", "prod", "hub"},
+	} {
+		t.Run(tc.number, func(t *testing.T) {
+			env := newCUJEnv(t)
+			state, cfg := newNotifierTestServer(t)
+			env.engine.SetAdminFrom("alice")
+			if err := env.engine.SetNotifier(cfg); err != nil {
+				t.Fatal(err)
+			}
+			defer env.engine.cancel()
+			env.userSends("alice", "/wn_deploy")
+			menu := env.lastSent()
+			for _, label := range []string{"1. Deploy QA Web", "2. Deploy QA Web Hub", "3. Deploy PROD Web", "4. Deploy PROD Web Hub"} {
+				if !strings.Contains(menu, label) {
+					t.Fatalf("missing %q in %s", label, menu)
+				}
+			}
+			env.userSends("alice", tc.number)
+			if !strings.Contains(env.lastSent(), tc.environment+" · "+tc.target) {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", tc.number)
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			if len(state.writes) != 1 || state.writes[0]["environment"] != tc.environment || state.writes[0]["target"] != tc.target || state.writes[0]["candidateSha"] != strings.Repeat("a", 40) {
+				t.Fatal(state.writes)
+			}
+		})
 	}
 }
 func TestCUJ_WN3_ParameterCancelAndExpiredSelection(t *testing.T) {
