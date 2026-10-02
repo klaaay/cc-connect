@@ -733,6 +733,13 @@ func (m *ManagementServer) handleProjectDetail(w http.ResponseWriter, r *http.Re
 			}
 		}
 
+		// 运行值可能被 /model、/reasoning 修改，不能用磁盘默认值代替。
+		if getter, ok := e.agent.(interface{ GetModel() string }); ok {
+			data["model"] = getter.GetModel()
+		}
+		if getter, ok := e.agent.(interface{ GetReasoningEffort() string }); ok {
+			data["reasoning_effort"] = getter.GetReasoningEffort()
+		}
 		mgmtJSON(w, http.StatusOK, data)
 		return
 	}
