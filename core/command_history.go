@@ -29,7 +29,7 @@ func changesExecutionContext(command string, args []string) bool {
 		sub = strings.ToLower(args[0])
 	}
 	switch command {
-	case "help", "history", "status", "current", "list", "whoami", "ps", "show", "diff", "version", "usage", "skills", "doctor", "search":
+	case "wn_tasks", "wn_deploy", "wn_runs", "wn_help", "help", "history", "status", "current", "list", "whoami", "ps", "show", "diff", "version", "usage", "skills", "doctor", "search":
 		return false
 	case "model", "mode", "reasoning", "lang", "name", "dir", "tts", "allow", "switch":
 		return len(args) > 0

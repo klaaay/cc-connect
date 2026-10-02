@@ -63,7 +63,7 @@ func (e *Engine) GetBridgePublishedCommands() []bridgePublishedCommand {
 	var commands []bridgePublishedCommand
 
 	for _, c := range builtinCommands {
-		if len(c.names) == 0 || disabledCmds[c.id] {
+		if len(c.names) == 0 || disabledCmds[c.id] || (strings.HasPrefix(c.id, "wn_") && e.notifier == nil) {
 			continue
 		}
 		if seen[c.id] {

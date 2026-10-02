@@ -2482,3 +2482,118 @@ func TestCUJ_B13_ManagedAnswerHistorySurvivesNewAndRestart(t *testing.T) {
 		t.Fatal("archived task lost the original question or duplicated its answer")
 	}
 }
+
+// Notifier journeys use the real command router and HTTP boundary; no agent executes the action.
+func TestCUJ_WN1_NumberedTasksPreserveSnapshotAndPin(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	env.engine.SetAdminFrom("alice")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	env.userSends("alice", "/wn_tasks")
+	if !strings.Contains(env.lastSent(), "📌 1. Pinned task") {
+		t.Fatal(env.lastSent())
+	}
+	state.mu.Lock()
+	state.catalog.Tasks[0], state.catalog.Tasks[1] = state.catalog.Tasks[1], state.catalog.Tasks[0]
+	state.mu.Unlock()
+	env.userSends("alice", "1")
+	if !strings.Contains(env.lastSent(), "run-1") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "1")
+	if !strings.Contains(env.lastSent(), "Selection consumed") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "/wn_runs")
+	env.userSends("alice", "1")
+	if !strings.Contains(env.lastSent(), "Succeeded") {
+		t.Fatal(env.lastSent())
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.paths) != 1 || state.paths[0] != "/task-instances/pinned/run" {
+		t.Fatal(state.paths)
+	}
+	if state.writes[0]["revision"] != "v1" {
+		t.Fatal(state.writes)
+	}
+}
+func TestCUJ_WN2_DeploymentSequenceAndCandidate(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	env.engine.SetAdminFrom("alice")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	for _, text := range []string{"/wn_deploy", "1", "1", "2"} {
+		env.userSends("alice", text)
+	}
+	if !strings.Contains(env.lastSent(), "qa · hub") {
+		t.Fatal(env.lastSent())
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.writes) != 1 || state.writes[0]["environment"] != "qa" || state.writes[0]["target"] != "hub" || state.writes[0]["candidateSha"] != strings.Repeat("a", 40) {
+		t.Fatal(state.writes)
+	}
+}
+func TestCUJ_WN3_ParameterCancelAndExpiredSelection(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	env.engine.SetAdminFrom("alice")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	env.userSends("alice", "/wn_tasks")
+	env.userSends("alice", "2")
+	env.userSends("alice", "NaN")
+	if !strings.Contains(env.lastSent(), "Invalid") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "cancel")
+	env.userSends("alice", "/wn_tasks")
+	env.engine.notifier.mu.Lock()
+	for _, s := range env.engine.notifier.selections {
+		s.expires = time.Now().Add(-time.Second)
+	}
+	env.engine.notifier.mu.Unlock()
+	env.userSends("alice", "1")
+	if !strings.Contains(env.lastSent(), "expired") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "/wn_tasks")
+	env.userSends("alice", "2")
+	env.userSends("alice", "12")
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.writes) != 1 || state.writes[0]["input"].(map[string]any)["issue"] != float64(12) {
+		t.Fatal(state.writes)
+	}
+}
+func TestCUJ_WN4_GroupSelectionIsUserScopedAndAuthorizationRechecked(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	env.engine.SetAdminFrom("alice,bob")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	send := func(user, text string) {
+		env.engine.ReceiveMessage(env.plat, &Message{InputOrigin: "human", Platform: "test", SessionKey: "test:group", UserID: user, Content: text, ReplyCtx: "group"})
+	}
+	send("alice", "/wn_tasks")
+	send("bob", "/wn_deploy")
+	send("alice", "1")
+	env.engine.SetDisabledCommands([]string{"wn_deploy"})
+	send("bob", "1")
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.writes) != 1 || state.paths[0] != "/task-instances/pinned/run" {
+		t.Fatal(state.paths)
+	}
+}

@@ -355,6 +355,7 @@ type RateLimitCfg struct {
 
 // Engine routes messages between platforms and the agent for a single project.
 type Engine struct {
+	notifier         *notifierInteraction
 	managedInputMu   sync.Mutex
 	managedRequestMu sync.Mutex
 
@@ -1247,6 +1248,7 @@ func (e *Engine) SetAdminFrom(adminFrom string) {
 
 // privilegedCommands are commands that require admin_from authorization.
 var privilegedCommands = map[string]bool{
+	"wn_tasks": true, "wn_deploy": true, "wn_runs": true,
 	"shell":   true,
 	"show":    true,
 	"dir":     true,
@@ -2446,6 +2448,7 @@ func (e *Engine) onPlatformReady(p Platform) {
 	}
 	slog.Info("platform ready", "project", e.name, "platform", p.Name())
 	e.initPlatformCapabilities(p)
+	e.resumeNotifierRuns(p)
 }
 
 func (e *Engine) markPlatformReady(p Platform) bool {
@@ -3031,6 +3034,7 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 		}
 	}
 	if len(msg.Images) == 0 && strings.HasPrefix(content, "/") {
+		e.clearNotifierSelection(p, msg)
 		if e.handleCommand(p, msg, content) {
 			return
 		}
@@ -3040,6 +3044,10 @@ func (e *Engine) handleMessage(p Platform, msg *Message) {
 	// Permission responses bypass the session lock.
 	// Must be after workspace resolution so interactiveKey is correct.
 	if e.handlePendingPermission(p, msg, content, interactiveKey) {
+		return
+	}
+
+	if len(msg.Images) == 0 && len(msg.Files) == 0 && e.handleNotifierSelection(p, msg, content) {
 		return
 	}
 
@@ -6623,6 +6631,10 @@ var builtinCommands = []struct {
 	{[]string{"provider"}, "provider"},
 	{[]string{"memory"}, "memory"},
 	{[]string{"cron"}, "cron"},
+	{[]string{"wn_tasks"}, "wn_tasks"},
+	{[]string{"wn_deploy"}, "wn_deploy"},
+	{[]string{"wn_runs"}, "wn_runs"},
+	{[]string{"wn_help"}, "wn_help"},
 	{[]string{"timer", "at", "remind"}, "timer"},
 	{[]string{"heartbeat", "hb"}, "heartbeat"},
 	{[]string{"compress", "compact"}, "compress"},
@@ -6819,6 +6831,8 @@ func (e *Engine) handleCommand(p Platform, msg *Message, raw string) bool {
 	}
 
 	switch cmdID {
+	case "wn_tasks", "wn_deploy", "wn_runs", "wn_help":
+		e.cmdNotifier(p, msg, cmdID)
 	case "new":
 		e.cmdNew(p, msg, args)
 	case "list":
@@ -9776,7 +9790,7 @@ func (e *Engine) GetAllCommands() []BotCommandInfo {
 		seenCmds[primaryName] = true
 
 		// Skip disabled commands
-		if disabledCmds[c.id] {
+		if disabledCmds[c.id] || (strings.HasPrefix(c.id, "wn_") && e.notifier == nil) {
 			continue
 		}
 

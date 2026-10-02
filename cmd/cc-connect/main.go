@@ -419,6 +419,12 @@ func main() {
 		}
 
 		engine := core.NewEngine(proj.Name, agent, platforms, sessionFile, lang)
+		if proj.Notifier != nil {
+			if err := engine.SetNotifier(core.NotifierConfig{BaseURL: proj.Notifier.BaseURL, TokenFile: proj.Notifier.TokenFile}); err != nil {
+				slog.Error("invalid webhook-notifier binding", "project", proj.Name, "error", err)
+				os.Exit(1)
+			}
+		}
 		// Wire display settings including show_context_indicator and reply_footer
 		// Global [display] config can be overridden by project-level settings
 		_, _, _, _, _, showCtx, showFooter, _ := config.EffectiveDisplay(cfg, &proj)

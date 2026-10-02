@@ -2287,3 +2287,10 @@ app_secret = "your-feishu-app-secret"
 # wps_sid = "your-wps-sid"             # WPS登录凭证 (Cookie中的wps_sid)
 # device_name = "cc-connect"           # 设备名称（可选）
 # device_uuid = ""                     # 设备UUID（可选，留空自动生成）
+
+# Webhook Notifier: add this table inside the intended [[projects]] section.
+# /wn_tasks, /wn_deploy and /wn_runs require that project's admin_from.
+# [projects.webhook_notifier]
+# base_url = "http://127.0.0.1:6682/api/admin/v1"
+# token_file = "/absolute/path/to/notifier/admin-token"
+# See docs/webhook-notifier.md for numbered selection and result recovery.

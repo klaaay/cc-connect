@@ -700,6 +700,225 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgWNAlreadySubmitted: {LangEnglish: "Selection consumed. Use /wn_runs to check, or fetch a new list.", LangChinese: "本次选择已提交，请通过 /wn_runs 查询，或重新获取列表。", LangTraditionalChinese: "本次選擇已提交，請透過 /wn_runs 查詢，或重新取得列表。", LangJapanese: "選択は送信済みです。/wn_runs で確認するか一覧を再取得してください。", LangSpanish: "Selección ya enviada. Consulta /wn_runs o solicita otra lista."},
+	MsgWNUnavailable: {
+		LangEnglish:            "Webhook Notifier is not configured for this project.",
+		LangChinese:            "当前项目尚未绑定 Webhook Notifier。",
+		LangTraditionalChinese: "目前專案尚未綁定 Webhook Notifier。",
+		LangJapanese:           "このプロジェクトに Webhook Notifier が設定されていません。",
+		LangSpanish:            "Webhook Notifier no está configurado para este proyecto.",
+	},
+	MsgWNHumanOnly: {
+		LangEnglish:            "Use these commands directly in chat.",
+		LangChinese:            "请在聊天中直接使用这些命令。",
+		LangTraditionalChinese: "請在聊天中直接使用這些命令。",
+		LangJapanese:           "チャットで直接コマンドを使用してください。",
+		LangSpanish:            "Usa estos comandos directamente en el chat.",
+	},
+	MsgWNHelp: {
+		LangEnglish:            "Webhook Notifier\n/wn_tasks — tasks\n/wn_deploy — deployments\n/wn_runs — recent runs\nReply with a number; next / prev / cancel. Selection expires after 5 minutes.",
+		LangChinese:            "Webhook Notifier\n/wn_tasks — 执行任务\n/wn_deploy — 手动部署\n/wn_runs — 执行记录\n回复序号选择；支持“下一页”“上一页”“取消”。选择有效期 5 分钟。",
+		LangTraditionalChinese: "Webhook Notifier\n/wn_tasks — 執行任務\n/wn_deploy — 手動部署\n/wn_runs — 執行記錄\n回覆序號選擇；支援 next / prev / cancel。選擇有效期 5 分鐘。",
+		LangJapanese:           "Webhook Notifier\n/wn_tasks — タスク\n/wn_deploy — デプロイ\n/wn_runs — 実行履歴\n番号で選択。next / prev / cancel。5 分で期限切れになります。",
+		LangSpanish:            "Webhook Notifier\n/wn_tasks — tareas\n/wn_deploy — despliegues\n/wn_runs — ejecuciones\nResponde con un número; next / prev / cancel. Caduca en 5 minutos.",
+	},
+	MsgWNQueryFailed: {
+		LangEnglish:            "Unable to query Notifier. No new execution was submitted by this query.",
+		LangChinese:            "Notifier 查询失败，请稍后重新获取列表。",
+		LangTraditionalChinese: "Notifier 查詢失敗，請稍後重新取得列表。",
+		LangJapanese:           "Notifier の照会に失敗しました。再度一覧を取得してください。",
+		LangSpanish:            "No se pudo consultar Notifier. Vuelve a obtener la lista.",
+	},
+	MsgWNDisabled: {
+		LangEnglish:            "Unavailable / disabled",
+		LangChinese:            "已停用或不可执行",
+		LangTraditionalChinese: "已停用或無法執行",
+		LangJapanese:           "無効または実行不可",
+		LangSpanish:            "Deshabilitada o no disponible",
+	},
+	MsgWNEmpty: {
+		LangEnglish:            "No entries available.",
+		LangChinese:            "当前没有可展示的条目。",
+		LangTraditionalChinese: "目前沒有可顯示的項目。",
+		LangJapanese:           "表示する項目がありません。",
+		LangSpanish:            "No hay elementos disponibles.",
+	},
+	MsgWNSelect: {
+		LangEnglish:            "Showing %d–%d / %d. Reply with a number, next, prev or cancel.",
+		LangChinese:            "第 %d–%d 项，共 %d 项。回复序号选择，或回复“下一页”“上一页”“取消”。",
+		LangTraditionalChinese: "第 %d–%d 項，共 %d 項。回覆序號選擇，或 next / prev / cancel。",
+		LangJapanese:           "%d–%d / %d。番号、next、prev、cancel を入力。",
+		LangSpanish:            "%d–%d / %d. Responde con un número, next, prev o cancel.",
+	},
+	MsgWNExpired: {
+		LangEnglish:            "Selection expired. Run /wn_tasks or /wn_deploy again.",
+		LangChinese:            "选择已过期，请重新发送 /wn_tasks 或 /wn_deploy。",
+		LangTraditionalChinese: "選擇已過期，請重新發送 /wn_tasks 或 /wn_deploy。",
+		LangJapanese:           "選択期限が切れました。/wn_tasks または /wn_deploy を再実行してください。",
+		LangSpanish:            "La selección caducó. Ejecuta /wn_tasks o /wn_deploy otra vez.",
+	},
+	MsgWNCancelled: {
+		LangEnglish:            "Selection cancelled. Submitted runs are unchanged.",
+		LangChinese:            "已退出选择；已提交的执行不会因此停止。",
+		LangTraditionalChinese: "已退出選擇；已提交的執行不會因此停止。",
+		LangJapanese:           "選択を終了しました。送信済みの実行は停止しません。",
+		LangSpanish:            "Selección cancelada. Las ejecuciones enviadas continúan.",
+	},
+	MsgWNInvalid: {
+		LangEnglish:            "Invalid selection or input. Use the current list and field requirements.",
+		LangChinese:            "序号或参数无效，请按当前列表和字段要求输入。",
+		LangTraditionalChinese: "序號或參數無效，請按目前列表與欄位要求輸入。",
+		LangJapanese:           "番号または入力が無効です。一覧と項目の条件を確認してください。",
+		LangSpanish:            "Selección o valor no válido. Sigue los requisitos del campo.",
+	},
+	MsgWNField: {
+		LangEnglish:            "Enter %s (%s); cancel to exit:",
+		LangChinese:            "请输入 %s（%s）；回复“取消”退出：",
+		LangTraditionalChinese: "請輸入 %s（%s）；回覆 cancel 退出：",
+		LangJapanese:           "%s（%s）を入力。cancel で終了：",
+		LangSpanish:            "Introduce %s (%s); cancel para salir:",
+	},
+	MsgWNSkip: {
+		LangEnglish:            "Optional: reply skip to omit.",
+		LangChinese:            "可选参数：回复“跳过”使用任务默认行为。",
+		LangTraditionalChinese: "可選參數：回覆 skip 使用預設行為。",
+		LangJapanese:           "任意項目：skip で省略。",
+		LangSpanish:            "Opcional: responde skip para omitir.",
+	},
+	MsgWNSubmitUnknown: {
+		LangEnglish:            "Submission was not confirmed. Request: %s. Check /wn_runs or Notifier before trying again; no automatic resubmission.",
+		LangChinese:            "未确认受理结果。请求标识：%s。请先通过 /wn_runs 或 Notifier 核验，避免重复执行；本入口不会自动重试。",
+		LangTraditionalChinese: "未確認受理結果。請求標識：%s。請先透過 /wn_runs 或 Notifier 核驗；不會自動重試。",
+		LangJapanese:           "受付を確認できませんでした。リクエスト：%s。再送前に /wn_runs または Notifier を確認してください。自動再送しません。",
+		LangSpanish:            "Envío sin confirmar. Solicitud: %s. Consulta /wn_runs o Notifier antes de repetir; no se reenvía automáticamente.",
+	},
+	MsgWNAccepted: {
+		LangEnglish:            "Submitted: %s\nExecution: %s\nQueued; acceptance does not mean completion.",
+		LangChinese:            "已提交：%s\n执行编号：%s\n已受理不代表完成，结果将在本会话回传。",
+		LangTraditionalChinese: "已提交：%s\n執行編號：%s\n已受理不代表完成，結果將在本會話回傳。",
+		LangJapanese:           "送信済み：%s\n実行 ID：%s\n受付は完了を意味しません。結果はこのチャットに届きます。",
+		LangSpanish:            "Enviado: %s\nEjecución: %s\nAceptado no significa completado. El resultado llegará aquí.",
+	},
+	MsgWNTrackingStopped: {
+		LangEnglish:            "Tracking stopped for %s. Use /wn_runs to check; this does not mean execution failed.",
+		LangChinese:            "执行 %s 的自动跟踪已结束，请通过 /wn_runs 查询；这不代表执行失败。",
+		LangTraditionalChinese: "執行 %s 的自動追蹤已結束，請透過 /wn_runs 查詢；這不代表執行失敗。",
+		LangJapanese:           "%s の自動追跡を終了しました。/wn_runs で確認してください。実行失敗を意味しません。",
+		LangSpanish:            "Terminó el seguimiento de %s. Consulta /wn_runs; esto no implica un fallo.",
+	},
+	"wn_tasks": {
+		LangEnglish:            "Webhook Notifier · Tasks",
+		LangChinese:            "Webhook Notifier · 执行任务",
+		LangTraditionalChinese: "Webhook Notifier · 執行任務",
+		LangJapanese:           "Webhook Notifier · タスク",
+		LangSpanish:            "Webhook Notifier · Tareas",
+	},
+	"wn_deploy": {
+		LangEnglish:            "Webhook Notifier · Deploy",
+		LangChinese:            "Webhook Notifier · 手动部署",
+		LangTraditionalChinese: "Webhook Notifier · 手動部署",
+		LangJapanese:           "Webhook Notifier · デプロイ",
+		LangSpanish:            "Webhook Notifier · Despliegues",
+	},
+	"wn_runs": {
+		LangEnglish:            "Webhook Notifier · Runs",
+		LangChinese:            "Webhook Notifier · 执行记录",
+		LangTraditionalChinese: "Webhook Notifier · 執行記錄",
+		LangJapanese:           "Webhook Notifier · 実行履歴",
+		LangSpanish:            "Webhook Notifier · Ejecuciones",
+	},
+	"wn_help": {
+		LangEnglish:            "Webhook Notifier · Help",
+		LangChinese:            "Webhook Notifier · 帮助",
+		LangTraditionalChinese: "Webhook Notifier · 說明",
+		LangJapanese:           "Webhook Notifier · ヘルプ",
+		LangSpanish:            "Webhook Notifier · Ayuda",
+	},
+	"wn_environment": {
+		LangEnglish:            "Select environment",
+		LangChinese:            "请选择部署环境",
+		LangTraditionalChinese: "請選擇部署環境",
+		LangJapanese:           "環境を選択",
+		LangSpanish:            "Selecciona el entorno",
+	},
+	"wn_target": {
+		LangEnglish:            "Select application",
+		LangChinese:            "请选择部署应用",
+		LangTraditionalChinese: "請選擇部署應用",
+		LangJapanese:           "アプリを選択",
+		LangSpanish:            "Selecciona la aplicación",
+	},
+	"wn_status_queued": {
+		LangEnglish:            "Queued",
+		LangChinese:            "排队中",
+		LangTraditionalChinese: "排隊中",
+		LangJapanese:           "待機中",
+		LangSpanish:            "En cola",
+	},
+	"wn_status_running": {
+		LangEnglish:            "Running",
+		LangChinese:            "执行中",
+		LangTraditionalChinese: "執行中",
+		LangJapanese:           "実行中",
+		LangSpanish:            "En curso",
+	},
+	"wn_status_succeeded": {
+		LangEnglish:            "Succeeded",
+		LangChinese:            "已完成",
+		LangTraditionalChinese: "已完成",
+		LangJapanese:           "完了",
+		LangSpanish:            "Completada",
+	},
+	"wn_status_failed": {
+		LangEnglish:            "Failed",
+		LangChinese:            "失败",
+		LangTraditionalChinese: "失敗",
+		LangJapanese:           "失敗",
+		LangSpanish:            "Fallida",
+	},
+	"wn_status_interrupted": {
+		LangEnglish:            "Interrupted; verify outcome",
+		LangChinese:            "已中断，需核验",
+		LangTraditionalChinese: "已中斷，需核驗",
+		LangJapanese:           "中断・要確認",
+		LangSpanish:            "Interrumpida; verificar",
+	},
+	"wn_status_unknown": {
+		LangEnglish:            "Unknown; verify outcome",
+		LangChinese:            "结果未知，需核验",
+		LangTraditionalChinese: "結果未知，需核驗",
+		LangJapanese:           "結果不明・要確認",
+		LangSpanish:            "Desconocida; verificar",
+	},
+	"wn_status_closed": {
+		LangEnglish:            "Closed",
+		LangChinese:            "已关闭",
+		LangTraditionalChinese: "已關閉",
+		LangJapanese:           "終了",
+		LangSpanish:            "Cerrada",
+	},
+	"wn_status_cancelled": {
+		LangEnglish:            "Cancelled",
+		LangChinese:            "已取消",
+		LangTraditionalChinese: "已取消",
+		LangJapanese:           "キャンセル済み",
+		LangSpanish:            "Cancelada",
+	},
+	"wn_status_success": {
+		LangEnglish:            "Succeeded",
+		LangChinese:            "已完成",
+		LangTraditionalChinese: "已完成",
+		LangJapanese:           "完了",
+		LangSpanish:            "Completada",
+	},
+	"wn_status_failure": {
+		LangEnglish:            "Failed",
+		LangChinese:            "失败",
+		LangTraditionalChinese: "失敗",
+		LangJapanese:           "失敗",
+		LangSpanish:            "Fallida",
+	},
+
 	MsgStarting: {
 		LangEnglish:            "⏳ Processing...",
 		LangChinese:            "⏳ 处理中...",
@@ -4574,3 +4793,23 @@ func (i *I18n) Tf(key MsgKey, args ...interface{}) string {
 	template := i.T(key)
 	return fmt.Sprintf(template, args...)
 }
+
+const (
+	MsgWNUnavailable     MsgKey = "wn_unavailable"
+	MsgWNHumanOnly       MsgKey = "wn_human_only"
+	MsgWNHelp            MsgKey = "wn_help_text"
+	MsgWNQueryFailed     MsgKey = "wn_query_failed"
+	MsgWNDisabled        MsgKey = "wn_disabled"
+	MsgWNEmpty           MsgKey = "wn_empty"
+	MsgWNSelect          MsgKey = "wn_select"
+	MsgWNExpired         MsgKey = "wn_expired"
+	MsgWNCancelled       MsgKey = "wn_cancelled"
+	MsgWNInvalid         MsgKey = "wn_invalid"
+	MsgWNField           MsgKey = "wn_field"
+	MsgWNSkip            MsgKey = "wn_skip"
+	MsgWNSubmitUnknown   MsgKey = "wn_submit_unknown"
+	MsgWNAccepted        MsgKey = "wn_accepted"
+	MsgWNTrackingStopped MsgKey = "wn_tracking_stopped"
+)
+
+const MsgWNAlreadySubmitted MsgKey = "wn_already_submitted"
