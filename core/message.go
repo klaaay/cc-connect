@@ -507,10 +507,11 @@ type Event struct {
 
 // HistoryEntry is one turn in a conversation.
 type HistoryEntry struct {
-	Origin    string    `json:"origin,omitempty"`
-	Role      string    `json:"role"` // "user" or "assistant"
-	Content   string    `json:"content"`
-	Timestamp time.Time `json:"timestamp"`
+	Timing    *TurnTiming `json:"timing,omitempty"`
+	Origin    string      `json:"origin,omitempty"`
+	Role      string      `json:"role"` // "user" or "assistant"
+	Content   string      `json:"content"`
+	Timestamp time.Time   `json:"timestamp"`
 }
 
 // AgentSessionInfo describes one session as reported by the agent backend.
