@@ -9,12 +9,18 @@ import (
 )
 
 func (e *Engine) notifierFieldPrompt(s *notifierSelection) string {
-	f := s.task.Inputs[s.field]
+	f := notifierCurrentField(s)
 	text := e.i18n.Tf(MsgWNField, f.Label, f.Type)
-	if len(f.Options) > 0 {
+	if f.Options != nil {
 		for i, option := range f.Options {
 			text += fmt.Sprintf("\n%d. %s", i+1, option)
 		}
+	}
+	if f.Type == "lines" && f.Options != nil {
+		text += "\n" + e.i18n.T(MsgWNMultiChoice)
+	}
+	if f.DefaultValue != nil {
+		text += "\n" + e.i18n.Tf(MsgWNDefaultChoice, fmt.Sprint(f.DefaultValue))
 	}
 	if f.Type == "boolean" {
 		text += "\n1. true\n2. false"
@@ -31,7 +37,15 @@ func (e *Engine) notifierFieldPrompt(s *notifierSelection) string {
 	return text
 }
 func parseNotifierInput(f notifierField, text string) (any, error) {
-	if len(f.Options) > 0 {
+	text = strings.TrimSpace(text)
+	if (text == "默认" || strings.EqualFold(text, "default")) && f.DefaultValue != nil {
+		return notifierDefaultInput(f)
+	}
+	if f.Type == "lines" && f.Options != nil {
+		return parseNotifierMultiChoice(f, text)
+	}
+
+	if f.Options != nil {
 		index, err := strconv.Atoi(text)
 		if err != nil || index < 1 || index > len(f.Options) {
 			return nil, fmt.Errorf("invalid option")
@@ -68,7 +82,7 @@ func parseNotifierInput(f notifierField, text string) (any, error) {
 	}
 }
 func (e *Engine) notifierInput(p Platform, msg *Message, key string, s *notifierSelection, text string) bool {
-	f := s.task.Inputs[s.field]
+	f := notifierCurrentField(s)
 	if (text != "跳过" && text != "skip") || f.Required {
 		value, err := parseNotifierInput(f, text)
 		if err != nil {
@@ -82,7 +96,7 @@ func (e *Engine) notifierInput(p Platform, msg *Message, key string, s *notifier
 		e.reply(p, msg.ReplyCtx, e.notifierFieldPrompt(s))
 		return true
 	}
-	s.stage = "submitted"
-	e.submitNotifierTask(p, msg, s)
+	s.stage = "confirm-task"
+	e.reply(p, msg.ReplyCtx, e.notifierTaskConfirmation(s))
 	return true
 }

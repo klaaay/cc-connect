@@ -161,7 +161,7 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		return true
 	}
 	if s.stage == "submitted" {
-		if _, err := strconv.Atoi(text); err == nil {
+		if _, err := strconv.Atoi(text); err == nil || text == "执行" || strings.EqualFold(text, "execute") {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWNAlreadySubmitted))
 			return true
 		}
@@ -169,6 +169,9 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		return false
 	}
 	s.expires = time.Now().Add(notifierSelectionTTL)
+	if s.stage == "confirm-task" {
+		return e.notifierConfirmTask(p, msg, s, text)
+	}
 	if s.stage == "input" {
 		return e.notifierInput(p, msg, key, s, text)
 	}

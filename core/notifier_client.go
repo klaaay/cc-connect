@@ -20,14 +20,16 @@ import (
 // Credentials remain in a local file; execution stays in Notifier's queues.
 type NotifierConfig struct{ BaseURL, TokenFile string }
 type notifierField struct {
-	Key       string   `json:"key"`
-	Label     string   `json:"label"`
-	Type      string   `json:"type"`
-	Required  bool     `json:"required"`
-	Options   []string `json:"options"`
-	Min       *float64 `json:"min"`
-	Max       *float64 `json:"max"`
-	MaxLength int      `json:"maxLength"`
+	DefaultValue any      `json:"defaultValue"`
+	ExcludeField string   `json:"excludeField"`
+	Key          string   `json:"key"`
+	Label        string   `json:"label"`
+	Type         string   `json:"type"`
+	Required     bool     `json:"required"`
+	Options      []string `json:"options"`
+	Min          *float64 `json:"min"`
+	Max          *float64 `json:"max"`
+	MaxLength    int      `json:"maxLength"`
 }
 type notifierTask struct {
 	ID       string          `json:"id"`

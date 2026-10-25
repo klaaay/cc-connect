@@ -2581,6 +2581,7 @@ func TestCUJ_WN3_ParameterCancelAndExpiredSelection(t *testing.T) {
 	env.userSends("alice", "/wn_tasks")
 	env.userSends("alice", "2")
 	env.userSends("alice", "12")
+	env.userSends("alice", "execute")
 	state.mu.Lock()
 	defer state.mu.Unlock()
 	if len(state.writes) != 1 || state.writes[0]["input"].(map[string]any)["issue"] != float64(12) {
@@ -2607,5 +2608,52 @@ func TestCUJ_WN4_GroupSelectionIsUserScopedAndAuthorizationRechecked(t *testing.
 	defer state.mu.Unlock()
 	if len(state.writes) != 1 || state.paths[0] != "/task-instances/pinned/run" {
 		t.Fatal(state.paths)
+	}
+}
+
+func TestCUJ_WN5_BranchDefaultsMultiSelectAndConfirm(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	env.engine.SetAdminFrom("alice")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	state.mu.Lock()
+	state.catalog.Tasks[0].Inputs = []notifierField{
+		{Key: "sourceBranch", Label: "Source", Type: "text", Required: true, Options: []string{"main"}, DefaultValue: "main"},
+		{Key: "targetBranches", Label: "Targets", Type: "lines", Required: true, Options: []string{"main", "electron", "ui", "reconstruction"}, DefaultValue: []string{"electron", "ui"}, ExcludeField: "sourceBranch"},
+	}
+	state.mu.Unlock()
+	env.userSends("alice", "/wn_tasks")
+	env.userSends("alice", "1")
+	if !strings.Contains(env.lastSent(), "Default: main") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "default")
+	if strings.Contains(env.lastSent(), "1. main") || !strings.Contains(env.lastSent(), "3. reconstruction") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "1，3")
+	if !strings.Contains(env.lastSent(), "electron reconstruction") || !strings.Contains(env.lastSent(), "execute") {
+		t.Fatal(env.lastSent())
+	}
+	state.mu.Lock()
+	if len(state.writes) != 0 {
+		t.Fatal("submitted before confirmation")
+	}
+	state.mu.Unlock()
+	env.userSends("alice", "execute")
+	if !strings.Contains(env.lastSent(), "run-1") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "execute")
+	if !strings.Contains(env.lastSent(), "Selection consumed") {
+		t.Fatal(env.lastSent())
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.writes) != 1 {
+		t.Fatal(state.writes)
 	}
 }

@@ -771,6 +771,34 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "番号または入力が無効です。一覧と項目の条件を確認してください。",
 		LangSpanish:            "Selección o valor no válido. Sigue los requisitos del campo.",
 	},
+	MsgWNMultiChoice: {
+		LangEnglish:            "Choose multiple numbers separated by commas or spaces (e.g. 1,3). This replaces the selection.",
+		LangChinese:            "可多选：回复编号，用逗号或空格分隔，例如 1,3。本次回复替换整个选择。",
+		LangTraditionalChinese: "可多選：回覆編號，以逗號或空格分隔，例如 1,3。此次回覆取代整個選擇。",
+		LangJapanese:           "複数選択：番号をカンマか空白で区切ります（例：1,3）。選択全体を置き換えます。",
+		LangSpanish:            "Elige varios números separados por comas o espacios (p. ej. 1,3). Reemplaza la selección.",
+	},
+	MsgWNDefaultChoice: {
+		LangEnglish:            "Default: %s. Reply default to use it.",
+		LangChinese:            "默认值：%s。回复“默认”使用。",
+		LangTraditionalChinese: "預設值：%s。回覆 default 使用。",
+		LangJapanese:           "既定値：%s。default で使用。",
+		LangSpanish:            "Predeterminado: %s. Responde default para usarlo.",
+	},
+	MsgWNConfirmTask: {
+		LangEnglish:            "Review the parameters. Reply execute to submit, or cancel.",
+		LangChinese:            "请核对以上执行参数。回复“执行”提交，或回复“取消”退出。",
+		LangTraditionalChinese: "請核對以上參數。回覆 execute 提交，或 cancel 退出。",
+		LangJapanese:           "パラメーターを確認し、execute で送信、cancel で終了。",
+		LangSpanish:            "Revisa los parámetros. Responde execute para enviar o cancel para salir.",
+	},
+	MsgWNSyncSteps: {
+		LangEnglish:            "Updates source submodules, then fast-forwards targets; stops if fast-forward is impossible.",
+		LangChinese:            "先更新来源分支子模块，再快进同步目标；无法快进时停止。",
+		LangTraditionalChinese: "先更新來源分支子模組，再快進同步目標；無法快進時停止。",
+		LangJapanese:           "元ブランチのサブモジュールを更新後、対象を fast-forward。同処理が不可能なら停止。",
+		LangSpanish:            "Actualiza submódulos del origen y avanza los destinos; se detiene si no es posible fast-forward.",
+	},
 	MsgWNField: {
 		LangEnglish:            "Enter %s (%s); cancel to exit:",
 		LangChinese:            "请输入 %s（%s）；回复“取消”退出：",
@@ -4799,6 +4827,10 @@ const (
 	MsgWNExpired         MsgKey = "wn_expired"
 	MsgWNCancelled       MsgKey = "wn_cancelled"
 	MsgWNInvalid         MsgKey = "wn_invalid"
+	MsgWNMultiChoice     MsgKey = "MsgWNMultiChoice"
+	MsgWNDefaultChoice   MsgKey = "MsgWNDefaultChoice"
+	MsgWNConfirmTask     MsgKey = "MsgWNConfirmTask"
+	MsgWNSyncSteps       MsgKey = "MsgWNSyncSteps"
 	MsgWNField           MsgKey = "wn_field"
 	MsgWNSkip            MsgKey = "wn_skip"
 	MsgWNSubmitUnknown   MsgKey = "wn_submit_unknown"
