@@ -785,6 +785,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "既定値：%s。default で使用。",
 		LangSpanish:            "Predeterminado: %s. Responde default para usarlo.",
 	},
+	MsgWNTrackingProject: {
+		LangEnglish:            "Tracking and repair project: %s. Backend execution runs independently; continue troubleshooting in its conversation if needed.",
+		LangChinese:            "跟踪与修复槽位：%s。后端独立执行；需要排查或修复时，请在该机器人的会话中继续。",
+		LangTraditionalChinese: "追蹤與修復槽位：%s。後端獨立執行；需要排查或修復時，請在該機器人的對話中繼續。",
+		LangJapanese:           "追跡・修復プロジェクト：%s。バックエンドは独立して実行します。調査や修復はその会話で続けてください。",
+		LangSpanish:            "Proyecto de seguimiento y reparación: %s. El backend se ejecuta de forma independiente; continúa el diagnóstico en su conversación.",
+	},
 	MsgWNConfirmTask: {
 		LangEnglish:            "Review the parameters. Reply execute to submit, or cancel.",
 		LangChinese:            "请核对以上执行参数。回复“执行”提交，或回复“取消”退出。",
@@ -4829,6 +4836,7 @@ const (
 	MsgWNInvalid         MsgKey = "wn_invalid"
 	MsgWNMultiChoice     MsgKey = "MsgWNMultiChoice"
 	MsgWNDefaultChoice   MsgKey = "MsgWNDefaultChoice"
+	MsgWNTrackingProject MsgKey = "MsgWNTrackingProject"
 	MsgWNConfirmTask     MsgKey = "MsgWNConfirmTask"
 	MsgWNSyncSteps       MsgKey = "MsgWNSyncSteps"
 	MsgWNField           MsgKey = "wn_field"

@@ -32,12 +32,13 @@ type notifierField struct {
 	MaxLength    int      `json:"maxLength"`
 }
 type notifierTask struct {
-	ID       string          `json:"id"`
-	Label    string          `json:"label"`
-	Revision string          `json:"revision"`
-	Pinned   bool            `json:"pinned"`
-	Enabled  bool            `json:"enabled"`
-	Inputs   []notifierField `json:"inputs"`
+	TrackingProject string          `json:"trackingProject,omitempty"`
+	ID              string          `json:"id"`
+	Label           string          `json:"label"`
+	Revision        string          `json:"revision"`
+	Pinned          bool            `json:"pinned"`
+	Enabled         bool            `json:"enabled"`
+	Inputs          []notifierField `json:"inputs"`
 }
 type notifierDeployment struct {
 	TaskID       string   `json:"taskId"`

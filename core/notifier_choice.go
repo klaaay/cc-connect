@@ -80,6 +80,9 @@ func notifierDefaultInput(f notifierField) (any, error) {
 }
 func (e *Engine) notifierTaskConfirmation(s *notifierSelection) string {
 	text := s.task.Label
+	if s.task.TrackingProject != "" {
+		text += "\n" + e.i18n.Tf(MsgWNTrackingProject, s.task.TrackingProject)
+	}
 	for _, f := range s.task.Inputs {
 		if value, ok := s.input[f.Key]; ok {
 			text += fmt.Sprintf("\n%s: %v", f.Label, value)
