@@ -793,11 +793,11 @@ var messages = map[MsgKey]map[Language]string{
 		LangSpanish:            "Revisa los parámetros. Responde execute para enviar o cancel para salir.",
 	},
 	MsgWNSyncSteps: {
-		LangEnglish:            "Updates source submodules, then fast-forwards targets; stops if fast-forward is impossible.",
-		LangChinese:            "先更新来源分支子模块，再快进同步目标；无法快进时停止。",
-		LangTraditionalChinese: "先更新來源分支子模組，再快進同步目標；無法快進時停止。",
-		LangJapanese:           "元ブランチのサブモジュールを更新後、対象を fast-forward。同処理が不可能なら停止。",
-		LangSpanish:            "Actualiza submódulos del origen y avanza los destinos; se detiene si no es posible fast-forward.",
+		LangEnglish:            "Fast-forwards targets to the source in the task's bound repository; stops on diverged branches. Repository-specific preparation is handled by the server.",
+		LangChinese:            "在任务绑定仓库内将目标快进到来源分支；分支分叉时停止。仓库特有的准备步骤由服务端执行。",
+		LangTraditionalChinese: "在任務綁定倉庫內將目標快進到來源分支；分支分叉時停止。倉庫特有的準備步驟由服務端執行。",
+		LangJapanese:           "タスクに紐づくリポジトリで対象を元ブランチへ fast-forward します。分岐時は停止し、リポジトリ固有の準備はサーバーが実行します。",
+		LangSpanish:            "Avanza los destinos al origen en el repositorio vinculado a la tarea; se detiene si divergen. El servidor realiza la preparación específica del repositorio.",
 	},
 	MsgWNField: {
 		LangEnglish:            "Enter %s (%s); cancel to exit:",

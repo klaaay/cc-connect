@@ -19,3 +19,19 @@ func TestNotifierMultiChoice(t *testing.T) {
 		}
 	}
 }
+
+func TestNotifierRepositoryScopedDefaults(t *testing.T) {
+	for _, branch := range []string{"frontend/ui", "backend/ui"} {
+		f := notifierField{Type: "text", Required: true, Options: []string{branch}, DefaultValue: branch}
+		got, err := parseNotifierInput(f, "默认")
+		if err != nil || got != branch {
+			t.Fatalf("repository default: got %v, err %v", got, err)
+		}
+		if _, err := parseNotifierInput(f, "other/ui"); err == nil {
+			t.Fatal("accepted a branch outside the bound repository options")
+		}
+	}
+	if _, err := parseNotifierInput(notifierField{Type: "text", Required: true, Options: []string{}}, "1"); err == nil {
+		t.Fatal("accepted an option for an unconfigured repository")
+	}
+}
