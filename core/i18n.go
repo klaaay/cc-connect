@@ -869,6 +869,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "Webhook Notifier · ヘルプ",
 		LangSpanish:            "Webhook Notifier · Ayuda",
 	},
+	MsgWNBranch: {
+		LangEnglish:            "Enter the branch to deploy (or cancel).",
+		LangChinese:            "请输入本次部署的分支名，或回复取消。",
+		LangTraditionalChinese: "請輸入本次部署的分支名稱，或回覆取消。",
+		LangJapanese:           "デプロイするブランチ名を入力してください（cancel で中止）。",
+		LangSpanish:            "Introduce la rama a desplegar (o cancel para cancelar).",
+	},
 	MsgWNDeployOption: {
 		LangEnglish:            "Deploy %s %s",
 		LangChinese:            "部署 %s %s",
@@ -4825,6 +4832,7 @@ func (i *I18n) Tf(key MsgKey, args ...interface{}) string {
 const (
 	MsgWNUnavailable     MsgKey = "wn_unavailable"
 	MsgWNHumanOnly       MsgKey = "wn_human_only"
+	MsgWNBranch          MsgKey = "wn_branch"
 	MsgWNDeployOption    MsgKey = "wn_deploy_option"
 	MsgWNHelp            MsgKey = "wn_help_text"
 	MsgWNQueryFailed     MsgKey = "wn_query_failed"

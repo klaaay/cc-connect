@@ -159,7 +159,13 @@ type appServerSession struct {
 	codexHome          string
 	promptPreamble     string
 
-	events chan core.Event
+	events       chan core.Event
+	eventMu      sync.Mutex
+	eventBacklog []core.Event
+	eventWake    chan struct{}
+	eventStop    chan struct{}
+	eventDone    chan struct{}
+	eventClosed  bool
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -1051,7 +1057,7 @@ func (s *appServerSession) Close() error {
 	}
 
 	s.closeOnce.Do(func() {
-		close(s.events)
+		s.closeEvents()
 	})
 	return nil
 }
@@ -1654,14 +1660,6 @@ func (s *appServerSession) flushPendingAsText() {
 		if strings.TrimSpace(text) != "" {
 			s.emit(core.Event{Type: core.EventText, Content: text})
 		}
-	}
-}
-
-func (s *appServerSession) emit(event core.Event) {
-	select {
-	case s.events <- event:
-	default:
-		slog.Warn("codex appserver: event channel full, dropping event", "type", event.Type)
 	}
 }
 

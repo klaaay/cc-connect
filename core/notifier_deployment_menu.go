@@ -17,7 +17,7 @@ func notifierDeploymentChoices(deployments []notifierDeployment) []notifierDeplo
 			for _, target := range d.Targets {
 				choice := notifierDeploymentChoice{notifierDeployment: d, environment: environment, target: target}
 				if len(deployments) > 1 {
-					choice.context = d.Label + " · " + d.Branch + " · " + d.TaskID
+					choice.context = d.ProjectPath
 				}
 				choices = append(choices, choice)
 			}

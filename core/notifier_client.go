@@ -41,9 +41,8 @@ type notifierTask struct {
 	Inputs          []notifierField `json:"inputs"`
 }
 type notifierDeployment struct {
-	TaskID       string   `json:"taskId"`
+	ProjectPath  string   `json:"projectPath"`
 	Label        string   `json:"label"`
-	Branch       string   `json:"branch"`
 	Environments []string `json:"environments"`
 	Targets      []string `json:"targets"`
 }
@@ -162,7 +161,7 @@ func (c *notifierClient) request(ctx context.Context, path, action string, body,
 func (c *notifierClient) catalog(ctx context.Context) (notifierCatalog, error) {
 	var result notifierCatalog
 	err := c.call(ctx, "/wn/catalog", "", nil, &result)
-	if err == nil && result.Version != 1 {
+	if err == nil && result.Version != 2 {
 		err = errors.New("notifier: unsupported catalog version")
 	}
 	return result, err

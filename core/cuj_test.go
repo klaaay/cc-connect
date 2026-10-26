@@ -2521,7 +2521,7 @@ func TestCUJ_WN1_NumberedTasksPreserveSnapshotAndPin(t *testing.T) {
 		t.Fatal(state.writes)
 	}
 }
-func TestCUJ_WN2_DeploymentSequenceAndCandidate(t *testing.T) {
+func TestCUJ_WN2_DeploymentV2CollectsBranch(t *testing.T) {
 	for _, tc := range []struct{ number, environment, target string }{
 		{"1", "qa", "web"}, {"2", "qa", "hub"}, {"3", "prod", "web"}, {"4", "prod", "hub"},
 	} {
@@ -2541,13 +2541,26 @@ func TestCUJ_WN2_DeploymentSequenceAndCandidate(t *testing.T) {
 				}
 			}
 			env.userSends("alice", tc.number)
+			if !strings.Contains(env.lastSent(), "branch") {
+				t.Fatal(env.lastSent())
+			}
+			state.mu.Lock()
+			if len(state.writes) != 0 {
+				t.Fatal("deployment submitted before branch input")
+			}
+			state.mu.Unlock()
+			env.userSends("alice", "--invalid")
+			if !strings.Contains(env.lastSent(), "Invalid") {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", "feature/v0.3.2")
 			if !strings.Contains(env.lastSent(), tc.environment+" · "+tc.target) {
 				t.Fatal(env.lastSent())
 			}
 			env.userSends("alice", tc.number)
 			state.mu.Lock()
 			defer state.mu.Unlock()
-			if len(state.writes) != 1 || state.writes[0]["environment"] != tc.environment || state.writes[0]["target"] != tc.target || state.writes[0]["candidateSha"] != strings.Repeat("a", 40) {
+			if len(state.writes) != 1 || state.writes[0]["environment"] != tc.environment || state.writes[0]["target"] != tc.target || state.writes[0]["projectPath"] != "team/repo" || state.writes[0]["branch"] != "feature/v0.3.2" || len(state.writes[0]) != 5 {
 				t.Fatal(state.writes)
 			}
 		})

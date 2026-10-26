@@ -22,10 +22,10 @@ type notifierTestServer struct {
 
 func newNotifierTestServer(t *testing.T) (*notifierTestServer, NotifierConfig) {
 	t.Helper()
-	state := &notifierTestServer{catalog: notifierCatalog{Version: 1, Tasks: []notifierTask{
+	state := &notifierTestServer{catalog: notifierCatalog{Version: 2, Tasks: []notifierTask{
 		{ID: "pinned", Label: "Pinned task", Revision: "v1", Pinned: true, Enabled: true},
 		{ID: "ordinary", Label: "Ordinary task", Revision: "v1", Enabled: true, Inputs: []notifierField{{Key: "issue", Label: "Issue", Type: "number", Required: true}}},
-	}, Deployments: []notifierDeployment{{TaskID: "release", Label: "team/repo", Branch: "main", Environments: []string{"qa", "prod"}, Targets: []string{"web", "hub"}}}}}
+	}, Deployments: []notifierDeployment{{ProjectPath: "team/repo", Label: "team/repo", Environments: []string{"qa", "prod"}, Targets: []string{"web", "hub"}}}}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		state.mu.Lock()
 		defer state.mu.Unlock()
@@ -44,7 +44,9 @@ func newNotifierTestServer(t *testing.T) (*notifierTestServer, NotifierConfig) {
 		case r.URL.Path == "/wn/catalog":
 			result = state.catalog
 		case r.URL.Path == "/automations/merge-task/candidate":
-			result = map[string]string{"revision": strings.Repeat("a", 40), "taskId": "release", "branch": "main"}
+			t.Error("removed candidate endpoint called")
+			w.WriteHeader(404)
+			return
 		case r.Method == "POST":
 			var body map[string]any
 			json.NewDecoder(r.Body).Decode(&body)
@@ -91,5 +93,31 @@ func TestNotifierClientDoesNotRetryWrites(t *testing.T) {
 func TestNotifierClientRejectsRemoteHTTP(t *testing.T) {
 	if _, err := newNotifierClient(NotifierConfig{BaseURL: "http://example.com", TokenFile: "token"}); err == nil {
 		t.Fatal("remote HTTP accepted")
+	}
+}
+
+func TestNotifierCatalogV2Accepted(t *testing.T) {
+	_, cfg := newNotifierTestServer(t)
+	client, err := newNotifierClient(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := client.catalog(context.Background())
+	if err != nil || catalog.Version != 2 {
+		t.Fatalf("v2 catalog rejected: %v", err)
+	}
+}
+
+func TestNotifierCatalogRejectsUnsupportedVersions(t *testing.T) {
+	for _, version := range []int{0, 1, 3} {
+		state, cfg := newNotifierTestServer(t)
+		state.catalog.Version = version
+		client, err := newNotifierClient(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := client.catalog(context.Background()); err == nil {
+			t.Fatalf("accepted version %d", version)
+		}
 	}
 }

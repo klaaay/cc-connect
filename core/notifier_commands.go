@@ -30,6 +30,8 @@ type notifierSelection struct {
 	task        notifierTask
 	deployment  notifierDeployment
 	environment string
+	target      string
+	branch      string
 	input       map[string]any
 	field       int
 }
@@ -169,6 +171,9 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		return false
 	}
 	s.expires = time.Now().Add(notifierSelectionTTL)
+	if s.stage == "branch" {
+		return e.notifierBranchInput(p, msg, s, text)
+	}
 	if s.stage == "confirm-task" {
 		return e.notifierConfirmTask(p, msg, s, text)
 	}
@@ -221,8 +226,9 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		choice := s.deployments[index]
 		s.deployment = choice.notifierDeployment
 		s.environment = choice.environment
-		s.stage = "submitted"
-		e.submitNotifierDeployment(p, msg, s, choice.target)
+		s.target = choice.target
+		s.stage = "branch"
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWNBranch))
 	case "wn_runs":
 		r := s.runs[index]
 		current, err := n.client.run(e.ctx, r.Kind, r.ID)
