@@ -3,10 +3,13 @@ package core
 import (
 	"fmt"
 	"math"
+	"regexp"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
+
+var notifierGitlabUsername = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,254}$`)
 
 func (e *Engine) notifierFieldPrompt(s *notifierSelection) string {
 	f := notifierCurrentField(s)
@@ -31,6 +34,9 @@ func (e *Engine) notifierFieldPrompt(s *notifierSelection) string {
 	if f.Max != nil {
 		text += fmt.Sprintf("\nmax: %g", *f.Max)
 	}
+	if !f.Required && f.Type == "text" && f.Options == nil {
+		text += "\n" + e.i18n.T(MsgWNClear)
+	}
 	if !f.Required {
 		text += "\n" + e.i18n.T(MsgWNSkip)
 	}
@@ -41,6 +47,14 @@ func parseNotifierInput(f notifierField, text string) (any, error) {
 	if (text == "默认" || strings.EqualFold(text, "default")) && f.DefaultValue != nil {
 		return notifierDefaultInput(f)
 	}
+	if !f.Required && f.Type == "text" && f.Options == nil && (text == "清空" || strings.EqualFold(text, "clear")) {
+		return "", nil
+	}
+	return parseNotifierValue(f, text)
+}
+
+// 默认值按字面值验证，避免把 default 等合法文本再次解释成操作命令。
+func parseNotifierValue(f notifierField, text string) (any, error) {
 	if f.Type == "lines" && f.Options != nil {
 		return parseNotifierMultiChoice(f, text)
 	}
@@ -59,6 +73,9 @@ func parseNotifierInput(f notifierField, text string) (any, error) {
 	case "text":
 		if f.Required && text == "" {
 			return nil, fmt.Errorf("required")
+		}
+		if text != "" && f.Format == "gitlab-username" && !notifierGitlabUsername.MatchString(text) {
+			return nil, fmt.Errorf("invalid gitlab username")
 		}
 		return text, nil
 	case "number":
@@ -83,7 +100,7 @@ func parseNotifierInput(f notifierField, text string) (any, error) {
 }
 func (e *Engine) notifierInput(p Platform, msg *Message, key string, s *notifierSelection, text string) bool {
 	f := notifierCurrentField(s)
-	if (text != "跳过" && text != "skip") || f.Required {
+	if (text != "跳过" && !strings.EqualFold(text, "skip")) || f.Required {
 		value, err := parseNotifierInput(f, text)
 		if err != nil {
 			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWNInvalid)+"\n"+e.notifierFieldPrompt(s))

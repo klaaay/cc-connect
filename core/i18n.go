@@ -813,6 +813,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "%s（%s）を入力。cancel で終了：",
 		LangSpanish:            "Introduce %s (%s); cancel para salir:",
 	},
+	MsgWNClear: {
+		LangEnglish:            "Reply clear to submit an empty value; skip omits the field and uses the task default.",
+		LangChinese:            "回复“清空”提交空值；“跳过”不提交该字段，沿用任务默认值。",
+		LangTraditionalChinese: "回覆 clear 提交空值；skip 不提交此欄位，沿用任務預設值。",
+		LangJapanese:           "clear で空の値を送信。skip は項目を省略しタスクの既定値を使います。",
+		LangSpanish:            "Responde clear para enviar un valor vacío; skip omite el campo y usa el valor predeterminado de la tarea.",
+	},
 	MsgWNSkip: {
 		LangEnglish:            "Optional: reply skip to omit.",
 		LangChinese:            "可选参数：回复“跳过”使用任务默认行为。",
@@ -4848,6 +4855,7 @@ const (
 	MsgWNConfirmTask     MsgKey = "MsgWNConfirmTask"
 	MsgWNSyncSteps       MsgKey = "MsgWNSyncSteps"
 	MsgWNField           MsgKey = "wn_field"
+	MsgWNClear           MsgKey = "wn_clear"
 	MsgWNSkip            MsgKey = "wn_skip"
 	MsgWNSubmitUnknown   MsgKey = "wn_submit_unknown"
 	MsgWNAccepted        MsgKey = "wn_accepted"

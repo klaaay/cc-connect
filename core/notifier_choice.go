@@ -42,10 +42,13 @@ func notifierDefaultInput(f notifierField) (any, error) {
 	values := []string{}
 	switch v := f.DefaultValue.(type) {
 	case bool:
-		return parseNotifierInput(f, strconv.FormatBool(v))
+		return parseNotifierValue(f, strconv.FormatBool(v))
 	case float64:
-		return parseNotifierInput(f, strconv.FormatFloat(v, 'f', -1, 64))
+		return parseNotifierValue(f, strconv.FormatFloat(v, 'f', -1, 64))
 	case string:
+		if f.Options == nil {
+			return parseNotifierValue(f, v)
+		}
 		values = []string{v}
 	case []string:
 		values = v
@@ -76,7 +79,7 @@ func notifierDefaultInput(f notifierField) (any, error) {
 	if f.Type == "text" && len(indices) != 1 {
 		return nil, fmt.Errorf("invalid default")
 	}
-	return parseNotifierInput(f, strings.Join(indices, ","))
+	return parseNotifierValue(f, strings.Join(indices, ","))
 }
 func (e *Engine) notifierTaskConfirmation(s *notifierSelection) string {
 	text := s.task.Label

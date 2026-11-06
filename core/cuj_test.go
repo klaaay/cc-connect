@@ -2670,3 +2670,74 @@ func TestCUJ_WN5_BranchDefaultsMultiSelectAndConfirm(t *testing.T) {
 		t.Fatal(state.writes)
 	}
 }
+
+func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
+	for _, tc := range []struct {
+		reply, reviewer string
+		present         bool
+		merge           string
+		auto            bool
+	}{
+		{"default", "wuzhen01", true, "default", false},
+		{"clear", "", true, "1", true},
+		{"SKIP", "", false, "2", false},
+		{"other-reviewer", "other-reviewer", true, "true", true},
+	} {
+		t.Run(tc.reply, func(t *testing.T) {
+			env := newCUJEnv(t)
+			state, cfg := newNotifierTestServer(t)
+			env.engine.SetAdminFrom("alice")
+			if err := env.engine.SetNotifier(cfg); err != nil {
+				t.Fatal(err)
+			}
+			defer env.engine.cancel()
+			state.mu.Lock()
+			state.catalog.Tasks[0].Inputs = []notifierField{
+				{Key: "sourceBranch", Label: "Source", Type: "text", Required: true, Options: []string{"ui"}, DefaultValue: "ui"},
+				{Key: "targetBranch", Label: "Target", Type: "text", Required: true, Options: []string{"dev"}, DefaultValue: "dev", ExcludeField: "sourceBranch"},
+				{Key: "reviewerUsername", Label: "Reviewer", Type: "text", Format: "gitlab-username", DefaultValue: "wuzhen01"},
+				{Key: "autoMerge", Label: "Merge", Type: "boolean", DefaultValue: false},
+			}
+			state.mu.Unlock()
+			env.userSends("alice", "/wn_tasks")
+			env.userSends("alice", "1")
+			env.userSends("alice", "default")
+			env.userSends("alice", "default")
+			if !strings.Contains(env.lastSent(), "wuzhen01") || !strings.Contains(env.lastSent(), "clear") {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", "bad username")
+			if !strings.Contains(env.lastSent(), "Reviewer") {
+				t.Fatal("invalid reviewer advanced form", env.lastSent())
+			}
+			env.userSends("alice", tc.reply)
+			if !strings.Contains(env.lastSent(), "Merge") {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", tc.merge)
+			if !strings.Contains(env.lastSent(), "execute") {
+				t.Fatal(env.lastSent())
+			}
+			state.mu.Lock()
+			if len(state.writes) != 0 {
+				t.Fatal("submitted before confirmation")
+			}
+			state.mu.Unlock()
+			env.userSends("alice", "execute")
+			if !strings.Contains(env.lastSent(), "run-1") {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", "execute")
+			state.mu.Lock()
+			defer state.mu.Unlock()
+			if len(state.writes) != 1 {
+				t.Fatal("duplicate submission")
+			}
+			input := state.writes[0]["input"].(map[string]any)
+			reviewer, present := input["reviewerUsername"]
+			if present != tc.present || (present && reviewer != tc.reviewer) || input["autoMerge"] != tc.auto || input["sourceBranch"] != "ui" || input["targetBranch"] != "dev" {
+				t.Fatalf("wrong submission: %v", input)
+			}
+		})
+	}
+}

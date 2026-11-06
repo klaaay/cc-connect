@@ -20,6 +20,7 @@ import (
 // Credentials remain in a local file; execution stays in Notifier's queues.
 type NotifierConfig struct{ BaseURL, TokenFile string }
 type notifierField struct {
+	Format       string   `json:"format"`
 	DefaultValue any      `json:"defaultValue"`
 	ExcludeField string   `json:"excludeField"`
 	Key          string   `json:"key"`
