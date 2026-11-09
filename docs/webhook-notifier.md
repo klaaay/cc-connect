@@ -14,7 +14,7 @@ token_file = "/absolute/path/to/notifier/admin-token"
 
 此示例仅展示新增字段；保留该项目原有 Agent、平台配置。`token_file` 使用 Notifier 现有管理令牌文件，建议权限 `0600`，不要把令牌写入 TOML。远端连接要求 HTTPS，本机回环地址可用 HTTP。此集成使用现有管理身份，具有该 Notifier 的管理范围，不提供另一个按任务授权系统。`/wn_tasks`、`/wn_deploy`、`/wn_runs` 及后续选择均检查项目 `admin_from` 和 disabled commands；只给预期操作者开放。
 
-- `/wn_tasks`：读取实时任务目录，按 Notifier 的置顶顺序展示；`📌` 在序号前。每页 10 项，序号在本次列表中连续。
+- `/wn_tasks`：读取实时任务目录，按 Notifier 的置顶顺序展示；`📌` 在序号前。每页 50 项，序号在本次列表中连续。
 - `/wn_deploy`：按仓库、环境和应用展开部署选项，选择后输入本次发布分支；取消或非法分支不会提交。服务端在提交时核验远端分支并固定候选 SHA。
 - `/wn_runs`：查看运行中和最近执行，回复序号读取最新状态。
 - `/wn_help`：查看交互帮助。

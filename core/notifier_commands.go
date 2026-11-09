@@ -10,6 +10,7 @@ import (
 )
 
 const notifierPageSize = 10
+const notifierTasksPageSize = 50
 const notifierSelectionTTL = 5 * time.Minute
 
 type notifierInteraction struct {
@@ -34,6 +35,13 @@ type notifierSelection struct {
 	branch      string
 	input       map[string]any
 	field       int
+}
+
+func (s *notifierSelection) pageSize() int {
+	if s.stage == "wn_tasks" {
+		return notifierTasksPageSize
+	}
+	return notifierPageSize
 }
 
 func (e *Engine) SetNotifier(cfg NotifierConfig) error {
@@ -120,8 +128,8 @@ func (e *Engine) notifierMenu(s *notifierSelection) string {
 	if len(lines) == 0 {
 		return title + "\n" + e.i18n.T(MsgWNEmpty)
 	}
-	start := s.page * notifierPageSize
-	end := min(start+notifierPageSize, len(lines))
+	start := s.page * s.pageSize()
+	end := min(start+s.pageSize(), len(lines))
 	var b strings.Builder
 	b.WriteString(title + "\n\n")
 	for i := start; i < end; i++ {
@@ -188,7 +196,7 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		count = len(s.runs)
 	}
 	if text == "下一页" || text == "next" {
-		if (s.page+1)*notifierPageSize < count {
+		if (s.page+1)*s.pageSize() < count {
 			s.page++
 		}
 		e.reply(p, msg.ReplyCtx, e.notifierMenu(s))
@@ -202,7 +210,7 @@ func (e *Engine) handleNotifierSelection(p Platform, msg *Message, content strin
 		return true
 	}
 	index, err := strconv.Atoi(text)
-	if err != nil || index < 1 || index > count || index <= s.page*notifierPageSize || index > (s.page+1)*notifierPageSize {
+	if err != nil || index < 1 || index > count || index <= s.page*s.pageSize() || index > (s.page+1)*s.pageSize() {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgWNInvalid))
 		return true
 	}

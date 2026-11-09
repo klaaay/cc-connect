@@ -2741,3 +2741,36 @@ func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
 		})
 	}
 }
+
+// 验证任务列表每页 50 项，翻页与选择共用相同边界。
+func TestCUJ_WN_TasksFiftyPerPage(t *testing.T) {
+	env := newCUJEnv(t)
+	state, cfg := newNotifierTestServer(t)
+	state.catalog.Tasks = nil
+	for i := 1; i <= 51; i++ {
+		state.catalog.Tasks = append(state.catalog.Tasks, notifierTask{ID: fmt.Sprintf("task-%d", i), Label: fmt.Sprintf("Task %d", i), Revision: "v1", Enabled: true})
+	}
+	env.engine.SetAdminFrom("alice")
+	if err := env.engine.SetNotifier(cfg); err != nil {
+		t.Fatal(err)
+	}
+	defer env.engine.cancel()
+	env.userSends("alice", "/wn_tasks")
+	if !strings.Contains(env.lastSent(), "50. Task 50\n") || strings.Contains(env.lastSent(), "51. Task 51") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "next")
+	if !strings.Contains(env.lastSent(), "51. Task 51\n") || strings.Contains(env.lastSent(), "50. Task 50\n") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "prev")
+	if !strings.Contains(env.lastSent(), "50. Task 50\n") {
+		t.Fatal(env.lastSent())
+	}
+	env.userSends("alice", "50")
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if len(state.paths) != 1 || state.paths[0] != "/task-instances/task-50/run" {
+		t.Fatal(state.paths, env.lastSent())
+	}
+}
