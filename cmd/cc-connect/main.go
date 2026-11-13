@@ -328,12 +328,29 @@ func main() {
 		os.Exit(0)
 	}
 
+	startupBytes, startupReadErr := os.ReadFile(configPath)
+	if startupReadErr != nil {
+		slog.Error("configuration unavailable")
+		os.Exit(1)
+	}
+	startupDigest := sha256.Sum256(startupBytes)
 	cfg, err := config.Load(configPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading config (%s): %v\n", configPath, err)
 		os.Exit(1)
 	}
 
+	loadedBytes, loadedReadErr := os.ReadFile(configPath)
+	if loadedReadErr != nil || sha256.Sum256(loadedBytes) != startupDigest {
+		slog.Error("configuration changed during startup")
+		os.Exit(1)
+	}
+	maintenance, maintenanceErr := core.OpenMaintenance(configPath + ".maintenance.json")
+	if maintenanceErr != nil {
+		slog.Error("maintenance state unavailable; refusing startup")
+		os.Exit(1)
+	}
+	core.InstallMaintenance(maintenance)
 	config.ConfigPath = configPath
 	slog.Info("config loaded", "path", configPath)
 
@@ -1185,6 +1202,7 @@ func main() {
 		mgmtSrv.SetGetProjectConfig(config.GetProjectConfigDetails)
 		mgmtSrv.SetSaveProviderRefs(config.SaveProviderRefs)
 		mgmtSrv.SetConfigFilePath(configPath)
+		mgmtSrv.SetLoadedConfigurationRevision(hex.EncodeToString(startupDigest[:]))
 		mgmtSrv.SetGetGlobalSettings(config.GetGlobalSettings)
 		mgmtSrv.SetSaveGlobalSettings(func(updates map[string]any) error {
 			u := config.GlobalSettingsUpdate{}

@@ -2774,3 +2774,34 @@ func TestCUJ_WN_TasksFiftyPerPage(t *testing.T) {
 		t.Fatal(state.paths, env.lastSent())
 	}
 }
+
+func TestCUJ_M1_MaintenanceRejectsAndResumesMessages(t *testing.T) {
+	g, err := OpenMaintenance(filepath.Join(t.TempDir(), "maintenance.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	InstallMaintenance(g)
+	defer InstallMaintenance(nil)
+	p := &stubPlatformEngine{n: "fixture"}
+	e := NewEngine("fixture", &stubAgent{}, []Platform{p}, "", LangChinese)
+	e.ReceiveMessage(p, &Message{SessionKey: "fixture:user", Content: "/help"})
+	if len(p.getSent()) == 0 {
+		t.Fatal("help not visible")
+	}
+	p.clearSent()
+	if err := g.Begin("operation", "revision"); err != nil {
+		t.Fatal(err)
+	}
+	e.ReceiveMessage(p, &Message{SessionKey: "fixture:user", Content: "请开始任务"})
+	if !strings.Contains(strings.Join(p.getSent(), ""), "暂不接收新任务") {
+		t.Fatal("maintenance feedback missing")
+	}
+	p.clearSent()
+	if err := g.End("operation"); err != nil {
+		t.Fatal(err)
+	}
+	e.ReceiveMessage(p, &Message{SessionKey: "fixture:user", Content: "/help"})
+	if len(p.getSent()) == 0 || strings.Contains(strings.Join(p.getSent(), ""), "暂不接收新任务") {
+		t.Fatal("messages not resumed")
+	}
+}
