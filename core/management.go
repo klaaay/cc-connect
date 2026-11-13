@@ -57,6 +57,7 @@ type ManagementServer struct {
 	getProjectConfig     func(projectName string) map[string]any
 	saveProviderRefs     func(projectName string, refs []string) error
 	configFilePath       string
+	loadedRevision       string
 	getGlobalSettings    func() map[string]any
 	saveGlobalSettings   func(map[string]any) error
 
@@ -110,6 +111,12 @@ func (m *ManagementServer) SetRemoveProject(fn func(string) error) {
 
 func (m *ManagementServer) SetConfigFilePath(path string) {
 	m.configFilePath = path
+	m.loadedRevision = configurationRevision(path)
+}
+
+// SetLoadedConfigurationRevision pins the bytes used to construct engines, not a later disk snapshot.
+func (m *ManagementServer) SetLoadedConfigurationRevision(revision string) {
+	m.loadedRevision = revision
 }
 
 func (m *ManagementServer) SetSaveProjectSettings(fn func(string, ProjectSettingsUpdate) error) {
@@ -215,6 +222,7 @@ func (m *ManagementServer) buildHandler(mux *http.ServeMux) http.Handler {
 	prefix := "/api/v1"
 
 	// System
+	mux.HandleFunc(prefix+"/maintenance", m.wrap(m.handleMaintenance))
 	mux.HandleFunc(prefix+"/status", m.wrap(m.handleStatus))
 	mux.HandleFunc(prefix+"/restart", m.wrap(m.handleRestart))
 	mux.HandleFunc(prefix+"/reload", m.wrap(m.handleReload))
@@ -317,6 +325,14 @@ func (m *ManagementServer) wrap(handler http.HandlerFunc) http.HandlerFunc {
 		if !m.authenticate(r) {
 			mgmtError(w, http.StatusUnauthorized, "unauthorized: missing or invalid token")
 			return
+		}
+		if r.Method != http.MethodGet && r.URL.Path != "/api/v1/maintenance" && !maintenanceStopRoute(r) {
+			release, err := enterExecution()
+			if err != nil {
+				mgmtError(w, 409, ErrMaintenance.Error())
+				return
+			}
+			defer release()
 		}
 		handler(w, r)
 	}

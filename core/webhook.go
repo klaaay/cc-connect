@@ -138,7 +138,12 @@ func (ws *WebhookServer) handleHook(w http.ResponseWriter, r *http.Request) {
 		"event":  eventName,
 	}
 	if req.Exec != "" {
-		go ws.executeShell(engine, req, eventName)
+		release, err := enterExecution()
+		if err != nil {
+			http.Error(w, ErrMaintenance.Error(), http.StatusConflict)
+			return
+		}
+		go func() { defer release(); ws.executeShell(engine, req, eventName) }()
 	} else {
 		prompt := req.Prompt
 		if req.Payload != nil {
@@ -213,6 +218,11 @@ type webhookIngressGuard struct {
 }
 
 func (ws *WebhookServer) acceptPrompt(engine *Engine, sessionKey, prompt string, silent bool, event string, guards ...webhookIngressGuard) (string, error) {
+	release, err := enterExecution()
+	if err != nil {
+		return "", err
+	}
+	defer release()
 	platformName := ""
 	if idx := strings.Index(sessionKey, ":"); idx > 0 {
 		platformName = sessionKey[:idx]

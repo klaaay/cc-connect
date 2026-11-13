@@ -672,8 +672,12 @@ func (cs *CronScheduler) RunJobNow(id string) error {
 	if !ok {
 		return fmt.Errorf("%w: %q", ErrCronProjectNotFound, job.Project)
 	}
+	release, err := enterExecution()
+	if err != nil {
+		return err
+	}
 	snapshot := *job
-	go cs.runJob(&snapshot, true)
+	go func() { defer release(); cs.runJob(&snapshot, true) }()
 	return nil
 }
 
@@ -731,7 +735,6 @@ type mutePlatform struct {
 
 func (m *mutePlatform) Reply(_ context.Context, _ any, _ string) error { return nil }
 func (m *mutePlatform) Send(_ context.Context, _ any, _ string) error  { return nil }
-
 
 func GenerateCronID() string {
 	b := make([]byte, 4)

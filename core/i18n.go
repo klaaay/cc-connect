@@ -192,6 +192,7 @@ func (i *I18n) SetLang(lang Language) {
 type MsgKey string
 
 const (
+	MsgMaintenance                MsgKey = "maintenance"
 	MsgStarting                   MsgKey = "starting"
 	MsgThinking                   MsgKey = "thinking"
 	MsgTool                       MsgKey = "tool"
@@ -700,6 +701,7 @@ const (
 )
 
 var messages = map[MsgKey]map[Language]string{
+	MsgMaintenance:        {LangEnglish: "Agent configuration maintenance is in progress. Please try again later.", LangChinese: "正在更新 Agent 配置，暂不接收新任务，请稍后重试。", LangTraditionalChinese: "正在更新 Agent 設定，暫不接收新任務，請稍後重試。", LangJapanese: "Agent 設定の更新中です。しばらくしてから再試行してください。", LangSpanish: "Se está actualizando la configuración del agente. Inténtalo más tarde."},
 	MsgWNAlreadySubmitted: {LangEnglish: "Selection consumed. Use /wn_runs to check, or fetch a new list.", LangChinese: "本次选择已提交，请通过 /wn_runs 查询，或重新获取列表。", LangTraditionalChinese: "本次選擇已提交，請透過 /wn_runs 查詢，或重新取得列表。", LangJapanese: "選択は送信済みです。/wn_runs で確認するか一覧を再取得してください。", LangSpanish: "Selección ya enviada. Consulta /wn_runs o solicita otra lista."},
 	MsgWNUnavailable: {
 		LangEnglish:            "Webhook Notifier is not configured for this project.",

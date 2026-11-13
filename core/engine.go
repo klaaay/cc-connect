@@ -1473,6 +1473,12 @@ func (e *Engine) ActiveSessionKeys() []string {
 // It finds the platform that owns the session key, reconstructs a reply context,
 // and processes the message as if the user sent it.
 func (e *Engine) ExecuteCronJob(job *CronJob) error {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		slog.Info("execution skipped for maintenance", "entry", "ExecuteCronJob", "project", e.name)
+		return maintenanceErr
+	}
+	defer release()
 	e.hooks.Emit(HookEvent{
 		Event:      HookEventCronTriggered,
 		SessionKey: job.SessionKey,
@@ -1682,6 +1688,12 @@ func (e *Engine) ExecuteCronJob(job *CronJob) error {
 // notification (unless muted), and either runs a shell command or injects a
 // synthetic message into the agent session.
 func (e *Engine) ExecuteTimerJob(job *TimerJob) error {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		slog.Info("execution skipped for maintenance", "entry", "ExecuteTimerJob", "project", e.name)
+		return maintenanceErr
+	}
+	defer release()
 	e.hooks.Emit(HookEvent{
 		Event:      HookEventTimerTriggered,
 		SessionKey: job.SessionKey,
@@ -2262,6 +2274,12 @@ func (e *Engine) finishCronShell(p Platform, replyCtx any, cmd *exec.Cmd, mu *sy
 // ExecuteHeartbeat runs a heartbeat check by injecting a synthetic message
 // into the main session, similar to cron but designed for periodic awareness.
 func (e *Engine) ExecuteHeartbeat(sessionKey, prompt string, silent bool) error {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		slog.Info("execution skipped for maintenance", "entry", "ExecuteHeartbeat", "project", e.name)
+		return maintenanceErr
+	}
+	defer release()
 	platformName := ""
 	if idx := strings.Index(sessionKey, ":"); idx > 0 {
 		platformName = sessionKey[:idx]
@@ -2828,6 +2846,23 @@ func (e *Engine) startMessageRecallMonitor(sessionKey string) context.CancelFunc
 }
 
 func (e *Engine) handleMessage(p Platform, msg *Message) {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		// 精确白名单保留停止和只读控制；仍经过原命令权限检查，不解析别名。
+		switch strings.TrimSpace(msg.Content) {
+		case "/stop", "/help", "/status", "/version":
+			e.managedInputMu.Lock()
+			defer e.managedInputMu.Unlock()
+			e.handleCommand(p, msg, strings.TrimSpace(msg.Content))
+			return
+		}
+		if msg.OnRejected != nil {
+			msg.OnRejected("maintenance")
+		}
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMaintenance))
+		return
+	}
+	defer release()
 	if msg.Recalled {
 		e.handleMessageRecall(p, msg)
 		return
@@ -8395,7 +8430,12 @@ func (e *Engine) cmdShell(p Platform, msg *Message, raw string) {
 		workDir, _ = os.Getwd()
 	}
 
-	go func() { _ = e.runShellWithProgress(p, msg.ReplyCtx, shellCmd, workDir, timeout, 4000) }()
+	release, err := enterExecution()
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMaintenance))
+		return
+	}
+	go func() { defer release(); _ = e.runShellWithProgress(p, msg.ReplyCtx, shellCmd, workDir, timeout, 4000) }()
 }
 
 func (e *Engine) cmdDiff(p Platform, msg *Message, raw string) {
@@ -8427,7 +8467,13 @@ func (e *Engine) cmdDiff(p Platform, msg *Message, raw string) {
 		workDir, _ = os.Getwd()
 	}
 
+	release, err := enterExecution()
+	if err != nil {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMaintenance))
+		return
+	}
 	go func() {
+		defer release()
 		ctx, cancel := context.WithTimeout(e.ctx, 60*time.Second)
 		defer cancel()
 
@@ -12271,6 +12317,11 @@ func (e *Engine) sendWithCard(p Platform, replyCtx any, card *Card) {
 // handleCardNav is called by platforms that support in-place card updates.
 // It routes nav: and act: prefixed actions to the appropriate render function.
 func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
+	release, err := enterExecution()
+	if err != nil {
+		return e.simpleCard(e.i18n.T(MsgCardTitleModel), "indigo", e.i18n.T(MsgMaintenance))
+	}
+	defer release()
 	var prefix, body string
 	if i := strings.Index(action, ":"); i >= 0 {
 		prefix = action[:i]
@@ -12372,6 +12423,11 @@ func (e *Engine) handleCardNav(action string, sessionKey string) *Card {
 }
 
 func (e *Engine) handleModelCardAction(args, sessionKey string) *Card {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		return e.simpleCard(e.i18n.T(MsgCardTitleModel), "indigo", e.i18n.T(MsgMaintenance))
+	}
+	defer release()
 	e.managedInputMu.Lock()
 	defer e.managedInputMu.Unlock()
 	e.recordLegacyCardInput("/model", args, sessionKey)
@@ -12444,6 +12500,11 @@ func workspaceFromInteractiveKey(interactiveKey, sessionKey string) string {
 // executeCardAction performs the side-effect for act: prefixed actions
 // (e.g. switching model/mode/lang) before the card is re-rendered.
 func (e *Engine) executeCardAction(cmd, args, sessionKey string) {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		return
+	}
+	defer release()
 	e.managedInputMu.Lock()
 	defer e.managedInputMu.Unlock()
 	e.recordLegacyCardInput(cmd, args, sessionKey)
@@ -14890,7 +14951,12 @@ func (e *Engine) executeCustomCommand(p Platform, msg *Message, cmd *CustomComma
 	}
 	// If this is an exec command, run shell command directly
 	if cmd.Exec != "" {
-		go e.executeShellCommand(p, msg, cmd, args)
+		release, err := enterExecution()
+		if err != nil {
+			e.reply(p, msg.ReplyCtx, e.i18n.T(MsgMaintenance))
+			return
+		}
+		go func() { defer release(); e.executeShellCommand(p, msg, cmd, args) }()
 		return
 	}
 
@@ -16104,6 +16170,16 @@ func (e *Engine) relayContextForSourceSessionKey(fromProject, sourceSessionKey s
 // dedicated relay session, sends the message to the agent, and blocks until
 // the complete response is collected (or the relay context times out).
 func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey, message string) (string, error) {
+	release, maintenanceErr := enterExecution()
+	if maintenanceErr != nil {
+		return "", maintenanceErr
+	}
+	transferred := false
+	defer func() {
+		if !transferred {
+			release()
+		}
+	}()
 	agent, sessions, relaySessionKey, err := e.relayContextForSourceSessionKey(fromProject, sourceSessionKey)
 	if err != nil {
 		return "", err
@@ -16225,7 +16301,11 @@ func (e *Engine) HandleRelay(ctx context.Context, fromProject, sourceSessionKey,
 			// Relay timed out. Let the agent finish its turn in the
 			// background so the session state is saved cleanly and the
 			// session remains resumable for the next relay call.
-			go e.drainRelaySession(agentSession, session, sessions, agent.Name(), relaySessionKey)
+			transferred = true
+			go func() {
+				defer release()
+				e.drainRelaySession(agentSession, session, sessions, agent.Name(), relaySessionKey)
+			}()
 			return relayPartialResponseOrError(ctx.Err(), textParts, fromProject, e.name)
 		}
 	}

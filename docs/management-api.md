@@ -1234,3 +1234,20 @@ Use a unique `request_id` for each task stop. Repeated requests reuse the result
 History entries expose ingress-assigned `origin`: `human` for a trusted platform human sender and `automation` for webhook, scheduled, or platform bot input. An empty value on old history means unknown. Telegram callbacks use the same attribution as ordinary messages. Native permission/question inputs are recorded against the actual interactive session before responding to the agent. The `user` role alone does not establish human participation.
 
 State-changing control commands use `CC_CONNECT_CONTROL /<command>` history entries without arguments. Read-only queries do not create participation facts. Legacy card navigation only supplies a session key, so its actions retain unknown origin. Automated control commands are not counted as human input.
+
+## 全局配置维护（capability_version = 1）
+
+`GET /api/v1/maintenance` 和 `POST /api/v1/maintenance` 使用既有管理鉴权，并要求配置非空管理 token。只返回配置 SHA-256、随机运行实例 ID、活动执行数量、维护阶段和 Project 的 Agent/model/reasoning_effort/可用强度，不返回配置原文或凭据。
+
+POST 字段：`action`、`operation_id`，以及按动作需要的 `revision`、`restart_id`、`projects`。
+
+- `begin`：revision 必须同时等于启动时加载版本和磁盘版本；在同一互斥边界检查活动执行为零并关闭执行受理。重复 owner/revision 幂等，不同 owner 或内容冲突返回 409。
+- `preflight`：仅当前维护 owner 可检查目标模板 Project；Codex 使用 `login status`，Claude Code 使用 `auth status --json`。检查本地 CLI 和认证状态，不启动模型任务；不支持或无法确认认证时拒绝，不输出账号或认证响应。它不保证远端模型供应商后续请求一定成功。
+- `restart`：要求磁盘 revision 匹配、owner 匹配；restart_id 在操作内唯一且持久化，重试不重复执行。响应丢失时先查询 instance_id，不盲目更换 restart_id。
+- `end`：要求加载版本和磁盘版本都等于 revision；恢复受理并保留已完成 owner，防止历史操作重放。调用方仍须核验 Project 运行值与预期一致。
+
+维护状态在配置文件旁的 `.maintenance.json` 中以 0600 原子保存；启动输入端和调度器前读取，损坏则拒绝启动。维护没有自动过期。恢复时先修复配置或加载正确版本，再由原 owner 解除；不要删除状态文件作为恢复手段。
+
+平台消息、管理写接口、Bridge、relay、cron/shell、timer、heartbeat 和 Session 执行锁复用进程级受理计数。直接消息收到维护提示，定时触发记录维护跳过且不补跑。只读管理 GET，以及精确 `/stop`、`/help`、`/status`、`/version` 和鉴权的 session stop 仍可使用；其他写命令拒绝。shell、超时后仍在执行的 relay 持续计入活动执行。新增后台执行入口须持有受理票据直到执行真正结束。
+
+该协议面向 Notifier 的批量 Agent 配置，客户端须先暂停自身调度、备份和原子写入，再在维护所有权下重启、核验新实例及运行值，最后解除维护。旧版本无此能力时，客户端必须禁止批量应用；本变更不会自动升级或重启已部署实例。
