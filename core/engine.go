@@ -6737,7 +6737,11 @@ func (e *Engine) cmdPs(p Platform, msg *Message, args []string) {
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSendFailed))
 		return
 	}
-	e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSent))
+	if deferred, ok := agentSession.(DeferredSteering); ok && deferred.SteeringDeferred() {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsQueued))
+	} else {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgPsSent))
+	}
 }
 
 // matchPrefix finds a unique command matching the given prefix.

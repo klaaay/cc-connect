@@ -450,6 +450,11 @@ type ModelOption struct {
 	Alias string // optional short alias for the /model command (e.g. "codex" for "gpt-5.3-codex")
 }
 
+// ModelEffortCatalog exposes model-specific reasoning choices to management clients.
+type ModelEffortCatalog interface {
+	ModelReasoningEfforts(context.Context) map[string][]string
+}
+
 // UsageReporter is an optional interface for agents that can report account or
 // model quota usage from their backing provider.
 type UsageReporter interface {
@@ -535,6 +540,11 @@ type AgentSessionCanceller interface {
 // currently active turn without starting a second turn.
 type AgentSessionSteerer interface {
 	SteerTurn(prompt string) error
+}
+
+// DeferredSteering identifies guidance applied at the next model boundary.
+type DeferredSteering interface {
+	SteeringDeferred() bool
 }
 
 // CommandProvider is an optional interface for agents that expose custom slash

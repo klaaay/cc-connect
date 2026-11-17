@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,17 +29,21 @@ func init() {
 //   - "yolo":      auto-approve all tools (--dangerously-skip-permissions)
 //   - "plan":      read-only plan mode with terminal sandbox constraints (--sandbox)
 type Agent struct {
-	workDir      string
-	model        string
-	mode         string
-	cmd          string   // CLI binary name, default "agy"
-	cliExtraArgs []string // extra args from cmd after the binary name
-	configEnv    []string // env vars from [projects.agent.options.env]
-	timeout      time.Duration
-	providers    []core.ProviderConfig
-	activeIdx    int
-	sessionEnv   []string
-	mu           sync.RWMutex
+	workDir         string
+	model           string
+	reasoningEffort string
+	catalogMu       sync.Mutex
+	catalog         *agyModelCatalog
+	catalogAt       time.Time
+	mode            string
+	cmd             string   // CLI binary name, default "agy"
+	cliExtraArgs    []string // extra args from cmd after the binary name
+	configEnv       []string // env vars from [projects.agent.options.env]
+	timeout         time.Duration
+	providers       []core.ProviderConfig
+	activeIdx       int
+	sessionEnv      []string
+	mu              sync.RWMutex
 }
 
 func New(opts map[string]any) (core.Agent, error) {
@@ -49,6 +52,7 @@ func New(opts map[string]any) (core.Agent, error) {
 		workDir = "."
 	}
 	model, _ := opts["model"].(string)
+	effort, _ := opts["reasoning_effort"].(string)
 	mode, _ := opts["mode"].(string)
 	mode = normalizeMode(mode)
 	cmd, extraArgs := core.ParseCmdOpts(opts, "agy")
@@ -76,14 +80,15 @@ func New(opts map[string]any) (core.Agent, error) {
 	}
 
 	return &Agent{
-		workDir:      workDir,
-		model:        model,
-		mode:         mode,
-		cmd:          cmd,
-		cliExtraArgs: extraArgs,
-		configEnv:    core.ParseConfigEnv(opts),
-		timeout:      timeout,
-		activeIdx:    -1,
+		workDir:         workDir,
+		model:           model,
+		reasoningEffort: strings.ToLower(strings.TrimSpace(effort)),
+		mode:            mode,
+		cmd:             cmd,
+		cliExtraArgs:    extraArgs,
+		configEnv:       core.ParseConfigEnv(opts),
+		timeout:         timeout,
+		activeIdx:       -1,
 	}, nil
 }
 
@@ -132,70 +137,6 @@ func (a *Agent) configuredModels() []core.ModelOption {
 	return core.GetProviderModels(a.providers, a.activeIdx)
 }
 
-func (a *Agent) AvailableModels(ctx context.Context) []core.ModelOption {
-	if models := a.configuredModels(); len(models) > 0 {
-		return models
-	}
-	if models := a.fetchModelsFromAPI(ctx); len(models) > 0 {
-		return models
-	}
-	return []core.ModelOption{
-		{Name: "gemini-3.1-pro-preview", Desc: "Gemini 3.1 Pro Preview"},
-		{Name: "gemini-3-flash-preview", Desc: "Gemini 3 Flash Preview"},
-		{Name: "gemini-2.5-pro", Desc: "Gemini 2.5 Pro"},
-		{Name: "gemini-2.5-flash", Desc: "Gemini 2.5 Flash"},
-	}
-}
-
-func (a *Agent) fetchModelsFromAPI(ctx context.Context) []core.ModelOption {
-	apiKey := os.Getenv("GEMINI_API_KEY")
-	if apiKey == "" {
-		apiKey = os.Getenv("GOOGLE_API_KEY")
-	}
-	if apiKey == "" {
-		return nil
-	}
-
-	url := "https://generativelanguage.googleapis.com/v1beta/models?key=" + apiKey
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil
-	}
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		slog.Debug("antigravity: failed to fetch models", "error", err)
-		return nil
-	}
-	defer func() {
-		_ = resp.Body.Close()
-	}()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-
-	var result struct {
-		Models []struct {
-			Name        string `json:"name"`
-			DisplayName string `json:"displayName"`
-		} `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil
-	}
-
-	var models []core.ModelOption
-	for _, m := range result.Models {
-		id := strings.TrimPrefix(m.Name, "models/")
-		if !strings.HasPrefix(id, "gemini-") {
-			continue
-		}
-		models = append(models, core.ModelOption{Name: id, Desc: m.DisplayName})
-	}
-	sort.Slice(models, func(i, j int) bool { return models[i].Name > models[j].Name })
-	return models
-}
-
 func (a *Agent) SetSessionEnv(env []string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -206,6 +147,7 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	a.mu.Lock()
 	model := a.model
 	mode := a.mode
+	effort := a.reasoningEffort
 	cmd := a.cmd
 	extraArgs := append([]string{}, a.cliExtraArgs...)
 	workDir := a.workDir
@@ -220,7 +162,12 @@ func (a *Agent) StartSession(ctx context.Context, sessionID string) (core.AgentS
 	}
 	a.mu.Unlock()
 
-	return newAntigravitySession(ctx, cmd, extraArgs, workDir, model, mode, sessionID, extraEnv, timeout)
+	session, err := newAntigravitySession(ctx, cmd, extraArgs, workDir, model, mode, sessionID, extraEnv, timeout)
+	if err != nil {
+		return nil, err
+	}
+	session.reasoningEffort = effort
+	return session, nil
 }
 
 func (a *Agent) ListSessions(_ context.Context) ([]core.AgentSessionInfo, error) {
@@ -333,12 +280,14 @@ func (a *Agent) GlobalMemoryFile() string {
 }
 
 func (a *Agent) SetProviders(providers []core.ProviderConfig) {
+	defer a.invalidateCatalog()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.providers = providers
 }
 
 func (a *Agent) SetActiveProvider(name string) bool {
+	defer a.invalidateCatalog()
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if name == "" {
@@ -380,6 +329,9 @@ func (a *Agent) providerEnvLocked() []string {
 	}
 	p := a.providers[a.activeIdx]
 	var env []string
+	if p.BaseURL != "" {
+		env = append(env, "GOOGLE_GEMINI_BASE_URL="+p.BaseURL)
+	}
 	if p.APIKey != "" {
 		env = append(env, "GEMINI_API_KEY="+p.APIKey)
 	}

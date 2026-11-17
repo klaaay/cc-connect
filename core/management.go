@@ -1419,10 +1419,11 @@ func (m *ManagementServer) handleProjectModels(w http.ResponseWriter, r *http.Re
 	for i, m := range models {
 		names[i] = m.Name
 	}
-	mgmtJSON(w, http.StatusOK, map[string]any{
-		"models":  names,
-		"current": ms.GetModel(),
-	})
+	data := map[string]any{"models": names, "current": ms.GetModel()}
+	if catalog, ok := e.agent.(ModelEffortCatalog); ok {
+		data["model_efforts"] = catalog.ModelReasoningEfforts(fetchCtx)
+	}
+	mgmtJSON(w, http.StatusOK, data)
 }
 
 func (m *ManagementServer) handleProjectModel(w http.ResponseWriter, r *http.Request, e *Engine) {
