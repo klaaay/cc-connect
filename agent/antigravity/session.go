@@ -26,6 +26,7 @@ type antigravitySession struct {
 	extraArgs        []string // extra args from cmd, prepended before agy args
 	workDir          string
 	model            string
+	reasoningEffort  string
 	mode             string
 	timeout          time.Duration
 	extraEnv         []string
@@ -36,7 +37,9 @@ type antigravitySession struct {
 	cancel           context.CancelFunc
 	wg               sync.WaitGroup
 	alive            atomic.Bool
+	busy             atomic.Bool
 	permissionBridge *agyPermissionBridge
+	steeringBridge   *agyPermissionBridge
 }
 
 func newAntigravitySession(ctx context.Context, cmd string, extraArgs []string, workDir, model, mode, resumeID string, extraEnv []string, timeout time.Duration) (*antigravitySession, error) {
@@ -56,12 +59,13 @@ func newAntigravitySession(ctx context.Context, cmd string, extraArgs []string, 
 	}
 	as.alive.Store(true)
 
+	bridge, err := newAgyPermissionBridge(sessionCtx, as.events, mode == "default")
+	if err != nil {
+		cancel()
+		return nil, fmt.Errorf("antigravity: initialize session hooks: %w", err)
+	}
+	as.steeringBridge = bridge
 	if mode == "default" {
-		bridge, err := newAgyPermissionBridge(sessionCtx, as.events)
-		if err != nil {
-			cancel()
-			return nil, fmt.Errorf("antigravity: initialize permission bridge: %w", err)
-		}
 		as.permissionBridge = bridge
 	}
 
@@ -77,6 +81,15 @@ func (as *antigravitySession) Send(prompt string, messageID string, images []cor
 		return fmt.Errorf("session is closed")
 	}
 
+	if !as.busy.CompareAndSwap(false, true) {
+		return fmt.Errorf("antigravity: turn already active")
+	}
+	accepted := false
+	defer func() {
+		if !accepted {
+			as.busy.Store(false)
+		}
+	}()
 	// Capture existing chat logs so we can identify a new session on first turn
 	preEntries := make(map[string]bool)
 	homeDir, err := os.UserHomeDir()
@@ -146,13 +159,10 @@ func (as *antigravitySession) Send(prompt string, messageID string, images []cor
 		fullPrompt += "\n\n[Attached files saved at: " + strings.Join(fileRefs, ", ") + "]"
 	}
 	agyConfigDir := ""
-	if as.permissionBridge != nil {
-		agyConfigDir = as.permissionBridge.AgyConfigDir()
+	if as.steeringBridge != nil {
+		agyConfigDir = as.steeringBridge.AgyConfigDir()
 	}
 	args := as.buildAntigravityArgs(chatID, isResume, as.mode, agyConfigDir, fullPrompt)
-	if strings.TrimSpace(as.model) != "" {
-		slog.Warn("antigravitySession: model is configured but ignored because agy does not support --model yet", "model", as.model)
-	}
 
 	var ctx context.Context
 	var cancel context.CancelFunc
@@ -177,8 +187,8 @@ func (as *antigravitySession) Send(prompt string, messageID string, images []cor
 	if len(as.extraEnv) > 0 {
 		env = core.MergeEnv(env, as.extraEnv)
 	}
-	if as.permissionBridge != nil {
-		env = core.MergeEnv(env, as.permissionBridge.Env())
+	if as.steeringBridge != nil {
+		env = core.MergeEnv(env, as.steeringBridge.Env())
 	}
 	cmd.Env = env
 
@@ -192,10 +202,13 @@ func (as *antigravitySession) Send(prompt string, messageID string, images []cor
 	var stderrBuf bytes.Buffer
 	cmd.Stderr = &stderrBuf
 
+	as.steeringBridge.beginTurn()
 	if err := cmd.Start(); err != nil {
+		as.steeringBridge.endTurn()
 		return fmt.Errorf("antigravitySession: start: %w", err)
 	}
 
+	accepted = true
 	started = true
 	as.wg.Add(1)
 	go func() {
@@ -223,7 +236,13 @@ func (as *antigravitySession) buildAntigravityArgs(chatID string, isResume bool,
 	case "plan":
 		args = append(args, "--sandbox")
 	}
-	args = append(args, "-p", fullPrompt)
+	if as.model != "" {
+		args = append(args, "--model", as.model)
+	}
+	if as.reasoningEffort != "" {
+		args = append(args, "--effort", as.reasoningEffort)
+	}
+	args = append(args, "--output-format", "stream-json", "-p", fullPrompt)
 	return args
 }
 
@@ -235,6 +254,8 @@ func (as *antigravitySession) readLoop(ctx context.Context, cmd *exec.Cmd, stdou
 		}
 
 		err := cmd.Wait()
+		as.steeringBridge.endTurn()
+		as.busy.Store(false)
 
 		// Detect conversation ID if this was the first turn of a fresh session.
 		// agy may flush the chat file only while the process is exiting, so wait
@@ -283,30 +304,7 @@ func (as *antigravitySession) readLoop(ctx context.Context, cmd *exec.Cmd, stdou
 		_ = stdout.Close()
 	}()
 
-	reader := bufio.NewReader(stdout)
-	buf := make([]byte, 1024)
-
-	for {
-		n, err := reader.Read(buf)
-		if n > 0 {
-			text := string(buf[:n])
-			select {
-			case as.events <- core.Event{Type: core.EventText, Content: text}:
-			case <-as.ctx.Done():
-				return
-			}
-		}
-		if err != nil {
-			if err != io.EOF && !strings.Contains(err.Error(), "file already closed") {
-				slog.Error("antigravitySession: read error", "error", err)
-				select {
-				case as.events <- core.Event{Type: core.EventError, Error: fmt.Errorf("read stdout: %w", err)}:
-				case <-as.ctx.Done():
-				}
-			}
-			return
-		}
-	}
+	as.readStream(stdout)
 }
 
 func (as *antigravitySession) detectNewSessionID(preEntries map[string]bool, sendStartedAt time.Time) string {
@@ -411,8 +409,8 @@ func (as *antigravitySession) Alive() bool {
 func (as *antigravitySession) Close() error {
 	as.alive.Store(false)
 	as.cancel()
-	if as.permissionBridge != nil {
-		as.permissionBridge.Close()
+	if as.steeringBridge != nil {
+		as.steeringBridge.Close()
 	}
 	done := make(chan struct{})
 	go func() {

@@ -554,6 +554,7 @@ const (
 	MsgCommandDisabled   MsgKey = "command_disabled"
 	MsgAdminRequired     MsgKey = "admin_required"
 	MsgRateLimited       MsgKey = "rate_limited"
+	MsgPsQueued          MsgKey = "ps_queued"
 	MsgPsSent            MsgKey = "ps_sent"
 	MsgPsSendFailed      MsgKey = "ps_send_failed"
 	MsgPsEmpty           MsgKey = "ps_empty"
@@ -3707,6 +3708,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "⏳ 訊息發送過快，請稍後再試。",
 		LangJapanese:           "⏳ メッセージの送信が速すぎます。しばらくお待ちください。",
 		LangSpanish:            "⏳ Estás enviando mensajes demasiado rápido. Espera un momento.",
+	},
+	MsgPsQueued: {
+		LangEnglish:            "✅ P.S. queued for the next model invocation in this task.",
+		LangChinese:            "✅ P.S. 已接收，将在当前任务下一次模型调用时送入。",
+		LangTraditionalChinese: "✅ P.S. 已接收，將在目前任務下一次模型呼叫時送入。",
+		LangJapanese:           "✅ P.S. を受け付けました。現在のタスクの次のモデル呼び出しに反映します。",
+		LangSpanish:            "✅ P.S. en cola para la próxima llamada al modelo en esta tarea.",
 	},
 	MsgPsSent: {
 		LangEnglish:            "✅ P.S. delivered.",

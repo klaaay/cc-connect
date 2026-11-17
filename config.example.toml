@@ -2252,7 +2252,10 @@ app_secret = "your-feishu-app-secret"
 # - "plan":      Read-only plan mode with terminal sandbox constraints (--sandbox) / 只读沙箱规划模式
 #
 # Optional: specify a model / 可选：指定模型
-# model = "gemini-3.1-pro-preview"
+# model = "gemini-4-hydrogen"  # agy models 返回的模型族；也支持 carbon / argon
+# reasoning_effort = "high"    # /reasoning 列出当前模型支持的强度
+# # /ps 在当前任务的下一次模型调用注入补充指令，不启动第二个任务。
+# # 请使用支持 --model、--effort、stream-json 和 invocation hooks 的 agy 版本。
 #
 # # Provider with API key / 使用 API Key 的 Provider
 # [[projects.agent.providers]]

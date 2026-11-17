@@ -41,14 +41,20 @@ type agyPermissionBridge struct {
 	configDir string
 	events    chan<- core.Event
 
-	nextID    atomic.Uint64
-	pendingMu sync.Mutex
-	pending   map[string]chan core.PermissionResult
-	closeOnce sync.Once
-	wg        sync.WaitGroup
+	turnMu         sync.Mutex
+	turnActive     bool
+	conversationID string
+	guidance       []string
+	permissions    bool
+	nextID         atomic.Uint64
+	pendingMu      sync.Mutex
+	pending        map[string]chan core.PermissionResult
+	closeOnce      sync.Once
+	wg             sync.WaitGroup
 }
 
-func newAgyPermissionBridge(ctx context.Context, events chan<- core.Event) (*agyPermissionBridge, error) {
+func newAgyPermissionBridge(ctx context.Context, events chan<- core.Event, permissionOptions ...bool) (*agyPermissionBridge, error) {
+	permissions := len(permissionOptions) == 0 || permissionOptions[0]
 	bridgeCtx, cancel := context.WithCancel(ctx)
 	rootDir, err := os.MkdirTemp("", "cc-connect-agy-permission-")
 	if err != nil {
@@ -56,7 +62,7 @@ func newAgyPermissionBridge(ctx context.Context, events chan<- core.Event) (*agy
 		return nil, fmt.Errorf("create permission bridge directory: %w", err)
 	}
 
-	configDir, err := createAgyConfigOverlay(rootDir)
+	configDir, err := createAgyConfigOverlay(rootDir, permissions)
 	if err != nil {
 		cancel()
 		_ = os.RemoveAll(rootDir)
@@ -79,22 +85,23 @@ func newAgyPermissionBridge(ctx context.Context, events chan<- core.Event) (*agy
 	}
 
 	bridge := &agyPermissionBridge{
-		ctx:       bridgeCtx,
-		cancel:    cancel,
-		listener:  listener,
-		address:   listener.Addr().String(),
-		token:     base64.RawURLEncoding.EncodeToString(tokenBytes),
-		rootDir:   rootDir,
-		configDir: configDir,
-		events:    events,
-		pending:   make(map[string]chan core.PermissionResult),
+		ctx:         bridgeCtx,
+		permissions: permissions,
+		cancel:      cancel,
+		listener:    listener,
+		address:     listener.Addr().String(),
+		token:       base64.RawURLEncoding.EncodeToString(tokenBytes),
+		rootDir:     rootDir,
+		configDir:   configDir,
+		events:      events,
+		pending:     make(map[string]chan core.PermissionResult),
 	}
 	bridge.wg.Add(1)
 	go bridge.acceptLoop()
 	return bridge, nil
 }
 
-func createAgyConfigOverlay(rootDir string) (string, error) {
+func createAgyConfigOverlay(rootDir string, permissionOptions ...bool) (string, error) {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve home directory for Agy permission bridge: %w", err)
@@ -133,20 +140,14 @@ func createAgyConfigOverlay(rootDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve cc-connect executable for Agy hook: %w", err)
 	}
-	bridgeHook, err := json.Marshal(map[string]any{
-		"PreToolUse": []any{
-			map[string]any{
-				"matcher": "*",
-				"hooks": []any{
-					map[string]any{
-						"type":    "command",
-						"command": shellQuote(executable) + " _agy-permission-hook",
-						"timeout": 86400,
-					},
-				},
-			},
-		},
-	})
+	hookConfig := map[string]any{}
+	for _, event := range []string{"PreInvocation", "PostInvocation", "Stop"} {
+		hookConfig[event] = []any{map[string]any{"type": "command", "command": shellQuote(executable) + " _agy-permission-hook " + event, "timeout": 10}}
+	}
+	if len(permissionOptions) == 0 || permissionOptions[0] {
+		hookConfig["PreToolUse"] = []any{map[string]any{"matcher": "*", "hooks": []any{map[string]any{"type": "command", "command": shellQuote(executable) + " _agy-permission-hook", "timeout": 86400}}}}
+	}
+	bridgeHook, err := json.Marshal(hookConfig)
 	if err != nil {
 		return "", fmt.Errorf("marshal Agy permission hook: %w", err)
 	}
@@ -238,6 +239,14 @@ func (b *agyPermissionBridge) handleConnection(conn net.Conn) {
 	}
 	_ = conn.SetDeadline(time.Time{})
 
+	if request.Event == "PreInvocation" || request.Event == "PostInvocation" || request.Event == "Stop" {
+		b.writeResponse(conn, b.invocationHookFor(request.Event, request.HookInput))
+		return
+	}
+	if !b.permissions {
+		b.writeResponse(conn, antigravityhook.BridgeResponse{Decision: "deny", Reason: "permission bridge disabled"})
+		return
+	}
 	var input agyHookInput
 	if err := json.Unmarshal(request.HookInput, &input); err != nil || strings.TrimSpace(input.ToolCall.Name) == "" {
 		b.writeResponse(conn, antigravityhook.BridgeResponse{Decision: "deny", Reason: "invalid Agy tool permission request"})

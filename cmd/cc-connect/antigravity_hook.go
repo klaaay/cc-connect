@@ -9,11 +9,16 @@ import (
 )
 
 func runAntigravityPermissionHook() {
+	event := ""
+	if len(os.Args) > 2 {
+		event = os.Args[2]
+	}
 	err := antigravityhook.Relay(
 		os.Stdin,
 		os.Stdout,
 		os.Getenv(antigravityhook.EnvAddress),
 		os.Getenv(antigravityhook.EnvToken),
+		event,
 	)
 	if err == nil {
 		return

@@ -2805,3 +2805,51 @@ func TestCUJ_M1_MaintenanceRejectsAndResumesMessages(t *testing.T) {
 		t.Fatal("messages not resumed")
 	}
 }
+
+type cujDeferredSteeringSession struct{ *steeringAgentSession }
+
+func (*cujDeferredSteeringSession) SteeringDeferred() bool { return true }
+
+func TestCUJ_C7_PsSteersActiveTurnAndRejectsIdle(t *testing.T) {
+	for _, deferred := range []bool{false, true} {
+		t.Run(fmt.Sprint(deferred), func(t *testing.T) {
+			p := &stubPlatformEngine{n: "test"}
+			s := newSteeringSession("steer-1")
+			var session AgentSession = s
+			if deferred {
+				session = &cujDeferredSteeringSession{s}
+			}
+			e := NewEngine("test", &controllableAgent{nextSession: session}, []Platform{p}, t.TempDir(), LangEnglish)
+			defer e.Stop()
+			send := func(text string) {
+				e.ReceiveMessage(p, &Message{SessionKey: "test:steer", Content: text, ReplyCtx: "ctx", UserID: "steer"})
+			}
+			wait := func(check func() bool) {
+				t.Helper()
+				deadline := time.Now().Add(3 * time.Second)
+				for !check() {
+					if time.Now().After(deadline) {
+						t.Fatalf("timeout, replies=%v", p.getSent())
+					}
+					time.Sleep(10 * time.Millisecond)
+				}
+			}
+			send("start work")
+			wait(func() bool { s.sendMu.Lock(); defer s.sendMu.Unlock(); return len(s.sendCalls) == 1 })
+			send("/ps add tests")
+			expected := e.i18n.T(MsgPsSent)
+			if deferred {
+				expected = e.i18n.T(MsgPsQueued)
+			}
+			wait(func() bool { return strings.Contains(strings.Join(p.getSent(), "\n"), expected) })
+			s.events <- Event{Type: EventText, Content: "Completed with added tests"}
+			s.events <- Event{Type: EventResult, Done: true, SessionID: "steer-1"}
+			wait(func() bool { return !e.sessions.GetOrCreateActive("test:steer").Busy() })
+			send("/ps too late")
+			wait(func() bool { return strings.Contains(strings.Join(p.getSent(), "\n"), e.i18n.T(MsgPsNoSession)) })
+			if calls := s.getSteerCalls(); len(calls) != 1 || calls[0] != "add tests" {
+				t.Fatalf("steering=%v", calls)
+			}
+		})
+	}
+}
