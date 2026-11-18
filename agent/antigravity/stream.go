@@ -15,8 +15,20 @@ type agyStreamEvent struct {
 	ConversationID string `json:"conversation_id"`
 	Step           struct {
 		ConversationID string `json:"conversation_id"`
+		Index          *int   `json:"step_index"`
+		State          string `json:"state"`
 		Type           string `json:"step_type"`
 		Text           string `json:"text_delta"`
+		ToolName       string `json:"tool_name"`
+		ToolInfo       struct {
+			Name       string         `json:"name"`
+			Parameters map[string]any `json:"parameters"`
+			Output     string         `json:"output"`
+			Error      *struct {
+				Type    string `json:"type"`
+				Message string `json:"message"`
+			} `json:"error"`
+		} `json:"tool_info"`
 	} `json:"step_update"`
 	Result struct {
 		ConversationID string `json:"conversation_id"`
@@ -36,6 +48,7 @@ func (as *antigravitySession) readStream(reader io.Reader) {
 	scanner := bufio.NewScanner(reader)
 	scanner.Buffer(make([]byte, 64*1024), 4<<20)
 	hadText := false
+	tools := make(map[string]*agyToolProgress)
 	for scanner.Scan() {
 		line := scanner.Text()
 		var event agyStreamEvent
@@ -65,6 +78,9 @@ func (as *antigravitySession) readStream(reader io.Reader) {
 		}
 		switch event.Event {
 		case "step_update":
+			if event.Step.Type == "tool" {
+				as.emitToolProgress(event, tools)
+			}
 			if event.Step.Type == "agent_response" && event.Step.Text != "" {
 				hadText = true
 				as.emit(core.Event{Type: core.EventText, Content: event.Step.Text})
