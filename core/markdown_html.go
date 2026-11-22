@@ -436,7 +436,7 @@ func IsRTL(s string) bool {
 }
 
 // FormatSmartTelegramRichMarkdown formats markdown text for Telegram Bot API 10.x sendRichMessage.
-// If body text exceeds minCollapseLength, it uses <details><summary>Title</summary>\n\nBody\n</details>
+// If body text exceeds minCollapseLength, it uses <details open><summary>Title</summary>\n\nBody\n</details>
 // while preserving tables, code blocks, headers, and footer quotes.
 func FormatSmartTelegramRichMarkdown(text string, minCollapseLength ...int) string {
 	minLen := 150
@@ -606,7 +606,7 @@ func FormatSmartTelegramRichMarkdown(text string, minCollapseLength ...int) stri
 	collapseBody := strings.Join(collapseParts, "\n\n")
 	var resultParts []string
 	if collapseBody != "" {
-		resultParts = append(resultParts, fmt.Sprintf("<details>\n<summary>%s</summary>\n\n%s\n</details>", header, collapseBody))
+		resultParts = append(resultParts, fmt.Sprintf("<details open>\n<summary>%s</summary>\n\n%s\n</details>", header, collapseBody))
 	} else if header != "" {
 		resultParts = append(resultParts, "### "+header)
 	}

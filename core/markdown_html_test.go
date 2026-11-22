@@ -7,6 +7,19 @@ import (
 	"testing"
 )
 
+func TestFormatSmartTelegramRichMarkdownDetailsStartOpen(t *testing.T) {
+	body := strings.Repeat("正文", 100)
+	for _, tc := range []struct{ input, summary string }{
+		{body, "Details"},
+		{"## 状态报告\n\n" + body, "状态报告"},
+	} {
+		want := "<details open>\n<summary>" + tc.summary + "</summary>\n\n" + body + "\n</details>"
+		if got := FormatSmartTelegramRichMarkdown(tc.input); got != want {
+			t.Errorf("unexpected details block: %q", got)
+		}
+	}
+}
+
 func TestMarkdownToSimpleHTML_Bold(t *testing.T) {
 	out := MarkdownToSimpleHTML("hello **world**")
 	if !strings.Contains(out, "<b>world</b>") {
