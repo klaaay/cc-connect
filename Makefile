@@ -3,8 +3,8 @@ MODULE     := github.com/chenhg5/cc-connect
 CMD        := ./cmd/cc-connect
 DIST       := dist
 
-VERSION := v1.5.1-beta.1
 COMMIT     := $(shell git rev-parse --short HEAD 2>/dev/null || echo "none")
+VERSION := $(shell cat UPSTREAM_VERSION)-custom.$(COMMIT)
 BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
 
 LDFLAGS := -s -w \

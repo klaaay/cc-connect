@@ -3,7 +3,7 @@ set -euo pipefail
 
 repo_dir="${CC_CONNECT_REPO_DIR:-/Users/wuzhen/CodeProjects/cc-connect}"
 install_dir="${CC_CONNECT_INSTALL_DIR:-/Users/wuzhen/.local/bin}"
-branch="${CC_CONNECT_BRANCH:-agent/codex-ps-steer}"
+branch="${CC_CONNECT_BRANCH:-release/custom}"
 binary_path="${install_dir}/cc-connect"
 
 cd "${repo_dir}"
@@ -19,21 +19,30 @@ if [[ -n "$(git status --porcelain)" ]]; then
   exit 1
 fi
 
-git fetch upstream
-git merge --no-edit upstream/main
+release_ref="$(git ls-remote --refs --tags --sort=-v:refname upstream |
+  awk '$2 ~ /^refs\/tags\/v[0-9]+\.[0-9]+\.[0-9]+$/ && !found { print $2; found=1 } END { if (!found) exit 1 }')"
+tag="${release_ref#refs/tags/}"
+git fetch --no-tags upstream "${release_ref}"
+git merge --no-ff -m "同步上游正式版 ${tag}" 'FETCH_HEAD^{commit}'
+if [[ "$(<UPSTREAM_VERSION)" != "${tag}" ]]; then
+  printf '%s\n' "${tag}" > UPSTREAM_VERSION
+  git add UPSTREAM_VERSION
+  git commit -m "更新上游基础版本至 ${tag}"
+fi
 
 go test ./agent/codex ./core -run 'Steer|CmdPs' -count=1
 go test ./core -run TestCUJ -count=1
 go test ./...
 go vet ./...
 
-version="$(git describe --tags --always)-klaaay"
-make build VERSION="${version}"
+make build
 
 if [[ -n "$(git status --porcelain)" ]]; then
   printf '错误：测试或构建修改了源码树，拒绝安装未提交产物。\n' >&2
   exit 1
 fi
+
+git push origin "${branch}"
 
 mkdir -p "${install_dir}"
 staged_binary="$(mktemp "${install_dir}/.cc-connect.XXXXXX")"
@@ -47,4 +56,3 @@ trap - EXIT
 
 "${binary_path}" daemon restart --force
 "${binary_path}" daemon status
-git push origin "${branch}"

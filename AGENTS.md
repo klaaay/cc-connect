@@ -1,5 +1,9 @@
 # CC-Connect Development Guide
 
+## 上游同步与版本
+
+fork 的 `release/custom` 仅同步 `upstream` 最新正式标签（`vX.Y.Z`）指向的提交，保留现有定制。将标签写入 `UPSTREAM_VERSION`，部署版本为 `<标签>-custom.<fork 短提交号>`。
+
 ## Project Overview
 
 CC-Connect is a bridge that connects AI coding agents (Claude Code, Codex, Gemini CLI, Cursor, etc.) with messaging platforms (Feishu/Lark, Telegram, Discord, Slack, DingTalk, WeChat Work, QQ, LINE). Users interact with their coding agent through their preferred messaging app.
