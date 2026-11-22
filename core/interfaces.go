@@ -504,6 +504,14 @@ type UsageReporter interface {
 	GetUsage(ctx context.Context) (*UsageReport, error)
 }
 
+// OnDemandUsageReporter queries quota only on an explicit /usage request.
+// Some CLIs start a subprocess and cannot serve the short reply-footer deadline.
+type OnDemandUsageReporter interface {
+	QueryUsage(context.Context) (*UsageReport, error)
+}
+
+var ErrUsageAuthUnsupported = errors.New("usage unavailable for the current authentication mode")
+
 // UsageReport is a provider-neutral quota snapshot returned by UsageReporter.
 type UsageReport struct {
 	Provider  string
@@ -511,6 +519,7 @@ type UsageReport struct {
 	UserID    string
 	Email     string
 	Plan      string
+	Grouped   bool // Show each named bucket as a separate model group.
 	Buckets   []UsageBucket
 	Credits   *UsageCredits
 }
@@ -526,6 +535,7 @@ type UsageBucket struct {
 // UsageWindow describes a single quota window.
 type UsageWindow struct {
 	Name              string
+	RemainingPercent  *float64 // Exact remaining percentage when supplied by the provider.
 	UsedPercent       int
 	WindowSeconds     int
 	ResetAfterSeconds int

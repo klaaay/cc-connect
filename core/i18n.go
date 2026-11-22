@@ -360,15 +360,16 @@ const (
 	MsgCompressNoSession    MsgKey = "compress_no_session"
 	MsgCompressDone         MsgKey = "compress_done"
 
-	MsgMemoryNotSupported MsgKey = "memory_not_supported"
-	MsgMemoryShowProject  MsgKey = "memory_show_project"
-	MsgMemoryShowGlobal   MsgKey = "memory_show_global"
-	MsgMemoryEmpty        MsgKey = "memory_empty"
-	MsgMemoryAdded        MsgKey = "memory_added"
-	MsgMemoryAddFailed    MsgKey = "memory_add_failed"
-	MsgMemoryAddUsage     MsgKey = "memory_add_usage"
-	MsgUsageNotSupported  MsgKey = "usage_not_supported"
-	MsgUsageFetchFailed   MsgKey = "usage_fetch_failed"
+	MsgMemoryNotSupported   MsgKey = "memory_not_supported"
+	MsgMemoryShowProject    MsgKey = "memory_show_project"
+	MsgMemoryShowGlobal     MsgKey = "memory_show_global"
+	MsgMemoryEmpty          MsgKey = "memory_empty"
+	MsgMemoryAdded          MsgKey = "memory_added"
+	MsgMemoryAddFailed      MsgKey = "memory_add_failed"
+	MsgMemoryAddUsage       MsgKey = "memory_add_usage"
+	MsgUsageAuthUnsupported MsgKey = "usage_auth_unsupported"
+	MsgUsageNotSupported    MsgKey = "usage_not_supported"
+	MsgUsageFetchFailed     MsgKey = "usage_fetch_failed"
 
 	// Inline strings previously hardcoded in engine.go
 	MsgStatusMode             MsgKey = "status_mode"
@@ -2719,6 +2720,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangTraditionalChinese: "❌ 寫入記憶檔案失敗: %v",
 		LangJapanese:           "❌ メモリファイルの書き込みに失敗しました: %v",
 		LangSpanish:            "❌ Error al escribir archivo de memoria: %v",
+	},
+	MsgUsageAuthUnsupported: {
+		LangEnglish:            "Quota lookup is unavailable with the current authentication method.",
+		LangChinese:            "当前认证方式不支持查询账号配额。",
+		LangTraditionalChinese: "目前的驗證方式不支援查詢帳號配額。",
+		LangJapanese:           "現在の認証方式ではアカウントの利用枠を確認できません。",
+		LangSpanish:            "El método de autenticación actual no permite consultar la cuota de la cuenta.",
 	},
 	MsgUsageNotSupported: {
 		LangEnglish:            "Current agent does not support `/usage`.",

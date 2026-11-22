@@ -17515,3 +17515,36 @@ func TestCmdCurrent_UsesNativeSummaryForCurrentAgentSession(t *testing.T) {
 		t.Fatalf("/list item count = %d, want %d\n%s", got, len(nativeSessions), p.sent[0])
 	}
 }
+
+type stubOnDemandUsageAgent struct {
+	stubAgent
+	report *UsageReport
+	err    error
+}
+
+func (a *stubOnDemandUsageAgent) QueryUsage(context.Context) (*UsageReport, error) {
+	return a.report, a.err
+}
+
+func TestCmdUsage_OnDemandModelGroups(t *testing.T) {
+	remaining := 99.98
+	full := 100.0
+	agent := &stubOnDemandUsageAgent{report: &UsageReport{Grouped: true, Buckets: []UsageBucket{
+		{Name: "Gemini Models", Windows: []UsageWindow{{WindowSeconds: 604800, RemainingPercent: &remaining}}},
+		{Name: "Claude and GPT models", Windows: []UsageWindow{{WindowSeconds: 18000, RemainingPercent: &full}}},
+	}}}
+	p := &stubPlatformEngine{n: "plain"}
+	e := NewEngine("test", agent, []Platform{p}, "", LangChinese)
+	msg := &Message{SessionKey: "test:user1", ReplyCtx: "ctx"}
+	e.handleCommand(p, msg, "/usage")
+	for _, want := range []string{"Gemini Models", "Claude and GPT models", "剩余：99.98%", "剩余：100.00%"} {
+		if len(p.sent) != 1 || !strings.Contains(p.sent[0], want) {
+			t.Fatalf("missing %q in %v", want, p.sent)
+		}
+	}
+	agent.err = ErrUsageAuthUnsupported
+	e.handleCommand(p, msg, "/usage")
+	if len(p.sent) != 2 || p.sent[1] != e.i18n.T(MsgUsageAuthUnsupported) {
+		t.Fatalf("responses: %v", p.sent)
+	}
+}

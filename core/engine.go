@@ -9687,16 +9687,24 @@ func (e *Engine) cmdUsage(p Platform, msg *Message) {
 		return
 	}
 
-	reporter, ok := agent.(UsageReporter)
-	if !ok {
+	var report *UsageReport
+	switch reporter := agent.(type) {
+	case OnDemandUsageReporter:
+		ctx, cancel := context.WithTimeout(e.ctx, 30*time.Second)
+		defer cancel()
+		report, err = reporter.QueryUsage(ctx)
+	case UsageReporter:
+		ctx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
+		defer cancel()
+		report, err = reporter.GetUsage(ctx)
+	default:
 		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgUsageNotSupported))
 		return
 	}
-
-	fetchCtx, cancel := context.WithTimeout(e.ctx, 10*time.Second)
-	defer cancel()
-
-	report, err := reporter.GetUsage(fetchCtx)
+	if errors.Is(err, ErrUsageAuthUnsupported) {
+		e.reply(p, msg.ReplyCtx, e.i18n.T(MsgUsageAuthUnsupported))
+		return
+	}
 	if err != nil {
 		e.reply(p, msg.ReplyCtx, e.i18n.Tf(MsgUsageFetchFailed, err))
 		return
@@ -9713,6 +9721,18 @@ func (e *Engine) cmdUsage(p Platform, msg *Message) {
 func formatUsageReport(report *UsageReport, lang Language) string {
 	if report == nil {
 		return usageUnavailableText(lang)
+	}
+
+	if report.Grouped {
+		var groups []string
+		for _, bucket := range report.Buckets {
+			lines := []string{bucket.Name}
+			for i := range bucket.Windows {
+				lines = append(lines, formatUsageBlock(lang, &bucket.Windows[i]))
+			}
+			groups = append(groups, strings.Join(lines, "\n\n"))
+		}
+		return strings.Join(groups, "\n\n")
 	}
 
 	var sb strings.Builder
@@ -9801,7 +9821,11 @@ func formatUsageBlock(lang Language, window *UsageWindow) string {
 	sb.WriteString("\n")
 	sb.WriteString(usageRemainingLabel(lang))
 	sb.WriteString(usageColon(lang))
-	sb.WriteString(fmt.Sprintf("%d%%", remaining))
+	if window.RemainingPercent != nil {
+		fmt.Fprintf(&sb, "%.2f%%", *window.RemainingPercent)
+	} else {
+		fmt.Fprintf(&sb, "%d%%", remaining)
+	}
 	sb.WriteString("\n")
 	sb.WriteString(usageResetLabel(lang))
 	sb.WriteString(usageColon(lang))

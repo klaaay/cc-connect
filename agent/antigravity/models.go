@@ -67,15 +67,16 @@ func (a *Agent) cliOutput(ctx context.Context, args ...string) ([]byte, error) {
 	argv := append(append([]string{}, a.cliExtraArgs...), args...)
 	env := core.MergeEnv(os.Environ(), append(append([]string{}, a.configEnv...), a.providerEnvLocked()...))
 	a.mu.RUnlock()
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
 	cmd := exec.CommandContext(ctx, binary, argv...)
 	cmd.Env, cmd.Dir = env, dir
 	cmd.WaitDelay = time.Second
 	output, err := cmd.Output()
 	// Never include subprocess output or environment in authentication errors.
 	if err != nil {
-		return nil, errors.New("antigravity: CLI installation or authentication unavailable")
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		return output, errors.New("antigravity: CLI installation or authentication unavailable")
 	}
 	return output, nil
 }
@@ -86,6 +87,8 @@ func (a *Agent) loadModelCatalog(ctx context.Context) *agyModelCatalog {
 	if a.catalog != nil && time.Since(a.catalogAt) < time.Minute {
 		return a.catalog
 	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	output, err := a.cliOutput(ctx, "models")
 	if err != nil {
 		return &agyModelCatalog{efforts: map[string][]string{}}
@@ -159,6 +162,8 @@ func hasEffort(values []string, effort string) bool {
 // /model is handled locally by agy and performs no model turn. It confirms that
 // the CLI can load its selected provider/credentials, not remote API authorization.
 func (a *Agent) MaintenanceReady(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	output, err := a.cliOutput(ctx, "--print", "/model")
 	if err != nil {
 		return err
