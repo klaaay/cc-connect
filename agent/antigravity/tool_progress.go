@@ -52,7 +52,7 @@ func (as *antigravitySession) emitToolProgress(event agyStreamEvent, steps map[s
 			data, _ := json.Marshal(step.ToolInfo.Parameters) // 来自已解码的 JSON，均为可序列化值。
 			input = string(data)
 		}
-		as.emit(core.Event{Type: core.EventToolUse, ToolName: progress.name, ToolInput: input})
+		as.emit(core.Event{Type: core.EventToolUse, ToolName: progress.name, ToolInput: input, ToolInputRaw: step.ToolInfo.Parameters})
 		progress.started = true
 	}
 	if step.State == "DONE" || step.State == "ERROR" {
@@ -64,9 +64,9 @@ func (as *antigravitySession) emitToolProgress(event agyStreamEvent, steps map[s
 func agyToolResult(event agyStreamEvent, name string) core.Event {
 	step := event.Step
 	// DONE 只代表工具已结束；输出可能是错误，不据此推断执行成功。
-	result := core.Event{Type: core.EventToolResult, ToolName: name, ToolResult: step.ToolInfo.Output, ToolStatus: "completed"}
+	result := core.Event{Type: core.EventToolResult, ToolName: name, ToolResult: formatAgyOutputValue(step.ToolInfo.Output), ToolStatus: "completed"}
 	if name == "run_command" {
-		if match := agyCommandExit.FindStringSubmatch(step.ToolInfo.Output); len(match) > 1 {
+		if match := agyCommandExit.FindStringSubmatch(result.ToolResult); len(match) > 1 {
 			if code, err := strconv.Atoi(match[1]); err == nil {
 				result.ToolExitCode = &code
 				success := code == 0

@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -40,20 +39,29 @@ type initResponse struct {
 	ProtocolVersion string `json:"protocolVersion"`
 }
 
+// appServerActivePermissionProfile identifies the permissions selected by Codex.
+type appServerActivePermissionProfile struct {
+	ID string `json:"id"`
+}
+
+// threadStartResponse carries the new thread metadata and permission provenance.
 type threadStartResponse struct {
-	Cwd             string  `json:"cwd"`
-	Model           string  `json:"model"`
-	ReasoningEffort *string `json:"reasoningEffort"`
-	Thread          struct {
+	ActivePermissionProfile *appServerActivePermissionProfile `json:"activePermissionProfile"`
+	Cwd                     string                            `json:"cwd"`
+	Model                   string                            `json:"model"`
+	ReasoningEffort         *string                           `json:"reasoningEffort"`
+	Thread                  struct {
 		ID string `json:"id"`
 	} `json:"thread"`
 }
 
+// threadResumeResponse carries the resumed thread metadata and permission provenance.
 type threadResumeResponse struct {
-	Cwd             string  `json:"cwd"`
-	Model           string  `json:"model"`
-	ReasoningEffort *string `json:"reasoningEffort"`
-	Thread          struct {
+	ActivePermissionProfile *appServerActivePermissionProfile `json:"activePermissionProfile"`
+	Cwd                     string                            `json:"cwd"`
+	Model                   string                            `json:"model"`
+	ReasoningEffort         *string                           `json:"reasoningEffort"`
+	Thread                  struct {
 		ID string `json:"id"`
 	} `json:"thread"`
 }
@@ -144,6 +152,7 @@ type appServerRequestUserInputAnswer struct {
 	Answers []string `json:"answers"`
 }
 
+// appServerSession owns the stdio JSON-RPC transport and the active thread state.
 type appServerSession struct {
 	cliBin             string
 	cliExtraArgs       []string
@@ -159,13 +168,14 @@ type appServerSession struct {
 	codexHome          string
 	promptPreamble     string
 
-	events       chan core.Event
-	eventMu      sync.Mutex
-	eventBacklog []core.Event
-	eventWake    chan struct{}
-	eventStop    chan struct{}
-	eventDone    chan struct{}
-	eventClosed  bool
+	events            chan core.Event
+	eventMu           sync.Mutex
+	eventBacklog      []core.Event
+	eventWake         chan struct{}
+	eventStop         chan struct{}
+	eventDone         chan struct{}
+	eventClosed       bool
+	permissionProfile string
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -188,11 +198,13 @@ type appServerSession struct {
 
 	closeOnce sync.Once
 	wg        sync.WaitGroup
+	readDone  chan struct{} // drain stdout before cmd.Wait closes its pipe
 
 	stateMu      sync.Mutex
 	steerMu      sync.Mutex
 	pendingMsgs  []string
 	currentTurn  string
+	turnRevision uint64 // terminal notifications can precede the turn/start response
 	preambleSent bool
 
 	runtimeMu sync.RWMutex
@@ -206,10 +218,10 @@ const (
 	appServerUsageRefreshTimeout = 1500 * time.Millisecond
 )
 
-func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs, disabledSkillPaths []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt string) (*appServerSession, error) {
+func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs, disabledSkillPaths []string, url, workDir, model, effort, mode, resumeID, baseURL, modelProvider string, extraEnv []string, codexHome string, systemPrompt string, appendPrompt, permissionProfile string) (*appServerSession, error) {
 	sessionCtx, cancel := context.WithCancel(ctx)
 	s := &appServerSession{
-		cliBin:             strings.TrimSpace(cliBin),
+		cliBin:             cliBin,
 		cliExtraArgs:       append([]string(nil), cliExtraArgs...),
 		disabledSkillPaths: append([]string(nil), disabledSkillPaths...),
 		url:                url,
@@ -228,6 +240,7 @@ func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs, disab
 		pending:            make(map[int64]chan rpcResponseEnvelope),
 		pendingApprovals:   make(map[string]chan core.PermissionResult),
 		preambleSent:       resumeID != "" && resumeID != core.ContinueSession,
+		permissionProfile:  permissionProfile,
 	}
 	s.alive.Store(true)
 
@@ -252,6 +265,20 @@ func newAppServerSession(ctx context.Context, cliBin string, cliExtraArgs, disab
 	return s, nil
 }
 
+// appServerListenURL returns the --listen value for the spawn. A stdio
+// transport ("stdio" / "stdio://", case-insensitive, matching
+// normalizeAppServerURL's EqualFold handling) must not open a listener:
+// on codex 0.152+ any --listen value switches the app-server to serve the
+// protocol over the listener only, leaving stdio unresponsive and timing
+// out every initialize (see #1781).
+func appServerListenURL(url string) string {
+	listenURL := strings.TrimSpace(url)
+	if strings.EqualFold(listenURL, "stdio://") || strings.EqualFold(listenURL, "stdio") {
+		return ""
+	}
+	return listenURL
+}
+
 func (s *appServerSession) appServerCommand() (string, []string) {
 	bin := strings.TrimSpace(s.cliBin)
 	if bin == "" {
@@ -259,8 +286,8 @@ func (s *appServerSession) appServerCommand() (string, []string) {
 	}
 	args := append([]string(nil), s.cliExtraArgs...)
 	args = append(args, "app-server")
-	if strings.TrimSpace(s.url) != "" {
-		args = append(args, "--listen", strings.TrimSpace(s.url))
+	if listenURL := appServerListenURL(s.url); listenURL != "" {
+		args = append(args, "--listen", listenURL)
 	}
 	if model := strings.TrimSpace(s.model); model != "" {
 		args = append(args, "-c", fmt.Sprintf("model=%q", model))
@@ -303,7 +330,11 @@ func codexDisabledSkillsOverride(paths []string) string {
 }
 
 func (s *appServerSession) connect() error {
-	bin, args := s.appServerCommand()
+	_, args := s.appServerCommand()
+	bin, err := resolveCodexExecutable(s.cliBin)
+	if err != nil {
+		return fmt.Errorf("codex app-server resolve CLI: %w", err)
+	}
 	cmd := exec.CommandContext(s.ctx, bin, args...)
 	cmd.Dir = s.workDir
 	env := append([]string(nil), s.extraEnv...)
@@ -338,6 +369,7 @@ func (s *appServerSession) connect() error {
 	slog.Info("codex app-server session started", "transport", "stdio", "pid", cmd.Process.Pid, "work_dir", s.workDir)
 
 	s.wg.Add(3)
+	s.readDone = make(chan struct{})
 	go s.readLoop(stdout)
 	go s.stderrLoop(stderr)
 	go s.waitLoop()
@@ -374,11 +406,11 @@ func (s *appServerSession) initialize() error {
 	return nil
 }
 
+// ensureThread starts or resumes a thread and checks that its configured permission profile took effect.
 func (s *appServerSession) ensureThread(resumeID string) error {
 	if resumeID != "" && resumeID != core.ContinueSession {
 		params := s.threadRequestParams()
 		params["threadId"] = resumeID
-		params["persistExtendedHistory"] = true
 
 		var resp threadResumeResponse
 		if err := s.request("thread/resume", params, &resp); err != nil {
@@ -386,6 +418,9 @@ func (s *appServerSession) ensureThread(resumeID string) error {
 		}
 		if resp.Thread.ID == "" {
 			return fmt.Errorf("codex app-server resume returned empty thread id")
+		}
+		if err := s.validatePermissionProfile(resp.ActivePermissionProfile); err != nil {
+			return err
 		}
 		s.applyThreadRuntimeState(resp.Cwd, resp.Model, resp.ReasoningEffort)
 		s.threadID.Store(resp.Thread.ID)
@@ -400,12 +435,30 @@ func (s *appServerSession) ensureThread(resumeID string) error {
 	if resp.Thread.ID == "" {
 		return fmt.Errorf("codex app-server start returned empty thread id")
 	}
+	if err := s.validatePermissionProfile(resp.ActivePermissionProfile); err != nil {
+		return err
+	}
 	s.applyThreadRuntimeState(resp.Cwd, resp.Model, resp.ReasoningEffort)
 	s.threadID.Store(resp.Thread.ID)
 	slog.Info("codex app-server thread started", "thread_id", resp.Thread.ID)
 	return nil
 }
 
+// validatePermissionProfile rejects ignored or replaced profiles, including older servers that do not support the field.
+func (s *appServerSession) validatePermissionProfile(active *appServerActivePermissionProfile) error {
+	if s.permissionProfile == "" {
+		return nil
+	}
+	if active == nil {
+		return fmt.Errorf("codex app-server: permission profile %q was not confirmed; use a Codex version supporting named permission profiles", s.permissionProfile)
+	}
+	if active.ID != s.permissionProfile {
+		return fmt.Errorf("codex app-server: requested permission profile %q, received %q", s.permissionProfile, active.ID)
+	}
+	return nil
+}
+
+// threadRequestParams selects either named permissions or a legacy sandbox, never both.
 func (s *appServerSession) threadRequestParams() map[string]any {
 	params := map[string]any{
 		"experimentalRawEvents":  false,
@@ -416,7 +469,9 @@ func (s *appServerSession) threadRequestParams() map[string]any {
 	}
 	if approval, sandbox := appServerModeSettings(s.mode); approval != "" {
 		params["approvalPolicy"] = approval
-		if sandbox != "" {
+		if s.permissionProfile != "" {
+			params["permissions"] = s.permissionProfile
+		} else if sandbox != "" {
 			params["sandbox"] = sandbox
 		}
 	}
@@ -510,7 +565,9 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 	}
 
 	s.stateMu.Lock()
-	if !s.preambleSent {
+	turnRevision := s.turnRevision
+	activeTurn := s.currentTurn
+	if activeTurn == "" && !s.preambleSent {
 		prompt = prependCodexPromptPreamble(prompt, s.promptPreamble)
 		s.preambleSent = true
 	}
@@ -534,6 +591,13 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 		})
 	}
 
+	if activeTurn != "" {
+		return s.steerTurn(threadID, activeTurn, input)
+	}
+	return s.startTurn(threadID, input, turnRevision)
+}
+
+func (s *appServerSession) startTurn(threadID string, input []map[string]any, turnRevision uint64) error {
 	params := map[string]any{
 		"threadId": threadID,
 		"input":    input,
@@ -557,6 +621,15 @@ func (s *appServerSession) Send(prompt string, messageID string, images []core.I
 	}
 
 	s.stateMu.Lock()
+	if s.turnRevision != turnRevision {
+		// A notification already finished this turn while its response waited.
+		s.stateMu.Unlock()
+		return nil
+	}
+	if !s.alive.Load() {
+		s.stateMu.Unlock()
+		return fmt.Errorf("codex app-server connection closed during turn/start: %w", io.EOF)
+	}
 	s.currentTurn = resp.Turn.ID
 	s.pendingMsgs = s.pendingMsgs[:0]
 	s.stateMu.Unlock()
@@ -601,6 +674,35 @@ func (s *appServerSession) SteerTurn(prompt string) error {
 	}
 	if resp.TurnID != turnID {
 		return fmt.Errorf("codex app-server turn/steer returned turn id %q, want %q", resp.TurnID, turnID)
+	}
+	return nil
+}
+
+func (s *appServerSession) steerTurn(threadID, expectedTurnID string, input []map[string]any) error {
+	params := map[string]any{
+		"threadId":       threadID,
+		"expectedTurnId": expectedTurnID,
+		"input":          input,
+	}
+
+	var resp turnSteerResponse
+	if err := s.request("turn/steer", params, &resp); err != nil {
+		s.stateMu.Lock()
+		if s.currentTurn == expectedTurnID {
+			// A turn can finish before its delayed turn/start response is
+			// installed. Do not strand every later message on a stale ID;
+			// the next user message gets a normal turn/start instead.
+			s.currentTurn = ""
+			s.turnRevision++
+		}
+		s.stateMu.Unlock()
+		return fmt.Errorf("codex app-server turn/steer: %w", err)
+	}
+	if resp.TurnID == "" {
+		return fmt.Errorf("codex app-server turn/steer returned empty turn id")
+	}
+	if resp.TurnID != expectedTurnID {
+		return fmt.Errorf("codex app-server turn/steer returned turn id %q, want %q", resp.TurnID, expectedTurnID)
 	}
 	return nil
 }
@@ -654,6 +756,9 @@ func (s *appServerSession) handleServerRequest(probe map[string]json.RawMessage)
 		return
 	}
 	params := probe["params"]
+	if s.rejectForeignServerRequest(rawID, method, params) {
+		return
+	}
 
 	switch method {
 	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
@@ -670,6 +775,39 @@ func (s *appServerSession) handleServerRequest(probe map[string]json.RawMessage)
 			"error": map[string]any{"code": -32601, "message": "method not found"},
 		})
 	}
+}
+
+// rejectForeignServerRequest answers child-thread requests without forwarding
+// their permissions or questions to the parent conversation.
+func (s *appServerSession) rejectForeignServerRequest(rawID json.RawMessage, method string, paramsRaw json.RawMessage) bool {
+	switch method {
+	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
+		"item/permissions/requestApproval", "item/tool/requestUserInput", "item/tool/call":
+	default:
+		return false
+	}
+	var ids struct {
+		ThreadID string `json:"threadId"`
+		TurnID   string `json:"turnId"`
+	}
+	if err := json.Unmarshal(paramsRaw, &ids); err != nil || s.acceptsTurnNotification(method, ids.ThreadID, ids.TurnID) {
+		return false
+	}
+
+	var result any
+	switch method {
+	case "item/commandExecution/requestApproval", "item/fileChange/requestApproval":
+		result = map[string]any{"decision": "decline"}
+	case "item/permissions/requestApproval":
+		result = map[string]any{"permissions": map[string]any{}}
+	case "item/tool/requestUserInput":
+		result = appServerRequestUserInputResponse{Answers: map[string]appServerRequestUserInputAnswer{}}
+	case "item/tool/call":
+		s.handleDynamicToolCall(rawID, paramsRaw)
+		return true
+	}
+	_ = s.writeJSON(map[string]any{"jsonrpc": "2.0", "id": rawID, "result": result})
+	return true
 }
 
 func (s *appServerSession) handleApprovalRequest(rawID json.RawMessage, method string, paramsRaw json.RawMessage) {
@@ -1064,24 +1202,21 @@ func (s *appServerSession) Close() error {
 
 func (s *appServerSession) readLoop(r io.Reader) {
 	defer s.wg.Done()
-	scanner := bufio.NewScanner(r)
-	scanBuf := make([]byte, 0, 64*1024)
-	const maxLineSize = 10 * 1024 * 1024 // 10MB
-	scanner.Buffer(scanBuf, maxLineSize)
+	if s.readDone != nil {
+		defer close(s.readDone)
+	}
 
-	for scanner.Scan() {
+	err := readJSONLines(r, func(data []byte) error {
 		select {
 		case <-s.ctx.Done():
-			return
+			return s.ctx.Err()
 		default:
 		}
-
-		data := scanner.Bytes()
 
 		var probe map[string]json.RawMessage
 		if err := json.Unmarshal(data, &probe); err != nil {
 			slog.Debug("codex app-server: invalid JSON", "error", err)
-			continue
+			return nil
 		}
 
 		_, hasID := probe["id"]
@@ -1093,7 +1228,7 @@ func (s *appServerSession) readLoop(r io.Reader) {
 			var resp rpcResponseEnvelope
 			if err := json.Unmarshal(data, &resp); err != nil {
 				slog.Debug("codex app-server: bad response envelope", "error", err)
-				continue
+				return nil
 			}
 			s.handleResponse(resp)
 
@@ -1106,31 +1241,17 @@ func (s *appServerSession) readLoop(r io.Reader) {
 			var notif rpcNotificationEnvelope
 			if err := json.Unmarshal(data, &notif); err != nil {
 				slog.Debug("codex app-server: bad notification envelope", "error", err)
-				continue
+				return nil
 			}
 			s.handleNotification(notif.Method, notif.Params)
 		}
-	}
+		return nil
+	})
 
-	err := scanner.Err()
-	if err != nil {
-		if s.ctx.Err() == nil && !errors.Is(err, io.EOF) {
-			slog.Warn("codex app-server read failed", "error", err)
-			if errors.Is(err, bufio.ErrTooLong) {
-				s.emitError(fmt.Errorf("codex app-server line exceeds max size (%d bytes): %w", maxLineSize, err))
-			} else {
-				s.emitError(fmt.Errorf("codex app-server connection closed: %w", err))
-			}
-		}
-		s.alive.Store(false)
-		s.rejectPending(err)
-		s.rejectPendingApprovals(err)
-		return
+	if err == nil {
+		err = io.EOF
 	}
-
-	s.alive.Store(false)
-	s.rejectPending(io.EOF)
-	s.rejectPendingApprovals(io.EOF)
+	s.finishTransport(fmt.Errorf("codex app-server connection closed: %w", err))
 }
 
 func (s *appServerSession) stderrLoop(r io.Reader) {
@@ -1160,16 +1281,36 @@ func (s *appServerSession) waitLoop() {
 		return
 	}
 
-	err := cmd.Wait()
-	if s.ctx.Err() == nil && err != nil {
-		slog.Warn("codex app-server exited unexpectedly", "error", err)
-		s.emitError(fmt.Errorf("codex app-server exited: %w", err))
+	if s.readDone != nil {
+		select {
+		case <-s.readDone:
+		case <-s.contextDone():
+		}
 	}
-	s.alive.Store(false)
+	err := cmd.Wait()
 	if err == nil {
 		err = io.EOF
 	}
+	s.finishTransport(fmt.Errorf("codex app-server exited: %w", err))
+}
+
+// Retire the active turn once. Release RPC/approval waiters before event
+// delivery, which may be blocked behind a slow consumer.
+func (s *appServerSession) finishTransport(err error) {
+	s.stateMu.Lock()
+	s.alive.Store(false)
+	active := s.currentTurn != ""
+	if active {
+		s.currentTurn = ""
+		s.pendingMsgs = s.pendingMsgs[:0]
+		s.turnRevision++
+	}
+	s.stateMu.Unlock()
 	s.rejectPending(err)
+	s.rejectPendingApprovals(err)
+	if active {
+		s.emitError(err)
+	}
 }
 
 func (s *appServerSession) handleResponse(resp rpcResponseEnvelope) {
@@ -1197,7 +1338,7 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 	switch method {
 	case "turn/started":
 		var notif turnNotification
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && s.acceptsThreadNotification(method, notif.ThreadID) {
 			s.stateMu.Lock()
 			s.currentTurn = notif.Turn.ID
 			s.pendingMsgs = s.pendingMsgs[:0]
@@ -1207,19 +1348,19 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 
 	case "item/started":
 		var notif itemNotification
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && s.acceptsTurnNotification(method, notif.ThreadID, notif.TurnID) {
 			s.handleItemStarted(notif.Item)
 		}
 
 	case "item/completed":
 		var notif itemNotification
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && s.acceptsTurnNotification(method, notif.ThreadID, notif.TurnID) {
 			s.handleItemCompleted(notif.Item)
 		}
 
 	case "turn/completed":
 		var notif turnNotification
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && s.acceptsTurnNotification(method, notif.ThreadID, notif.Turn.ID) {
 			if strings.EqualFold(strings.TrimSpace(notif.Turn.Status), "failed") || notif.Turn.Error != nil {
 				errMsg := ""
 				if notif.Turn.Error != nil {
@@ -1235,16 +1376,11 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 		}
 
 	case "thread/status/changed":
-		var notif struct {
-			ThreadID string `json:"threadId"`
-			Status   struct {
-				Type string `json:"type"`
-			} `json:"status"`
-		}
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil && notif.Status.Type == "idle" {
-			// In codex 0.125+, thread going idle signals turn completion.
-			s.completeTurn()
-		}
+		// Thread status has neither a turn ID nor a terminal outcome. An idle
+		// notification may precede the final items or a failed turn/completed,
+		// and a delayed idle may belong to the previous turn. Only the matching
+		// turn/completed notification can finish the active turn.
+		return
 
 	case "account/rateLimits/updated":
 		var notif appServerRateLimitsResponse
@@ -1254,16 +1390,48 @@ func (s *appServerSession) handleNotification(method string, paramsRaw json.RawM
 
 	case "thread/tokenUsage/updated":
 		var notif appServerThreadTokenUsageNotification
-		if err := json.Unmarshal(paramsRaw, &notif); err == nil {
+		if err := json.Unmarshal(paramsRaw, &notif); err == nil && s.acceptsTurnNotification(method, notif.ThreadID, notif.TurnID) {
 			s.storeContextUsage(mapAppServerTokenUsage(notif))
 		}
 
 	case "error":
 		var notif errorNotification
 		if err := json.Unmarshal(paramsRaw, &notif); err == nil && strings.TrimSpace(notif.Message) != "" {
-			s.emitError(fmt.Errorf("%s", notif.Message))
+			err := fmt.Errorf("%s", notif.Message)
+			if !s.failTurn(err) {
+				s.emitError(err) // retain connection errors outside an active turn
+			}
 		}
 	}
+}
+
+func (s *appServerSession) acceptsThreadNotification(method, threadID string) bool {
+	currentThreadID := s.CurrentSessionID()
+	if threadID == "" || currentThreadID == "" || threadID == currentThreadID {
+		return true
+	}
+	slog.Debug("codex app-server: ignoring notification for another thread",
+		"method", method, "thread_id", threadID, "current_thread_id", currentThreadID)
+	return false
+}
+
+func (s *appServerSession) acceptsTurnNotification(method, threadID, turnID string) bool {
+	if !s.acceptsThreadNotification(method, threadID) {
+		return false
+	}
+	if turnID == "" {
+		return true
+	}
+
+	s.stateMu.Lock()
+	currentTurn := s.currentTurn
+	s.stateMu.Unlock()
+	if currentTurn == "" || turnID == currentTurn {
+		return true
+	}
+	slog.Debug("codex app-server: ignoring notification for another turn",
+		"method", method, "turn_id", turnID, "current_turn_id", currentTurn)
+	return false
 }
 
 func (s *appServerSession) handleItemStarted(item map[string]any) {
@@ -1317,6 +1485,9 @@ func (s *appServerSession) handleItemCompleted(item map[string]any) {
 		}
 
 	case "agentMessage":
+		if s.handleAsyncUserInput(item) {
+			return
+		}
 		text, _ := item["text"].(string)
 		if strings.TrimSpace(text) != "" {
 			s.stateMu.Lock()
@@ -1620,21 +1791,24 @@ func (s *appServerSession) completeTurn() {
 		return
 	}
 	s.currentTurn = ""
+	s.turnRevision++
 	s.stateMu.Unlock()
 	s.flushPendingAsText()
 	s.emit(core.Event{Type: core.EventResult, SessionID: s.CurrentSessionID(), Done: true})
 }
 
-func (s *appServerSession) failTurn(err error) {
+func (s *appServerSession) failTurn(err error) bool {
 	s.stateMu.Lock()
 	if s.currentTurn == "" {
 		s.stateMu.Unlock()
-		return
+		return false
 	}
 	s.currentTurn = ""
+	s.turnRevision++
 	s.pendingMsgs = s.pendingMsgs[:0]
 	s.stateMu.Unlock()
 	s.emitError(err)
+	return true
 }
 
 func (s *appServerSession) flushPendingAsThinking() {

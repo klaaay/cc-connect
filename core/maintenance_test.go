@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMaintenance_PersistsAndRequiresOwner(t *testing.T) {
@@ -92,17 +93,18 @@ func TestMaintenance_SessionLifetime(t *testing.T) {
 	InstallMaintenance(g)
 	defer InstallMaintenance(nil)
 	session := &Session{}
-	if !session.TryLock() {
+	gen, locked := session.TryLock()
+	if !locked {
 		t.Fatal("initial lock")
 	}
 	if g.Begin("op", "rev") == nil {
 		t.Fatal("busy session missed")
 	}
-	session.Unlock()
+	session.Unlock(gen)
 	if err := g.Begin("op", "rev"); err != nil {
 		t.Fatal(err)
 	}
-	if session.TryLock() {
+	if _, locked := session.TryLock(); locked {
 		t.Fatal("session bypassed maintenance")
 	}
 }
@@ -190,5 +192,43 @@ func TestMaintenance_WebhookShellIsRejectedBeforeAcceptance(t *testing.T) {
 	result := postWebhookPrompt(t, ws, WebhookRequest{Project: "fixture", SessionKey: "fixture:user", Exec: "exit 0"})
 	if result.Code != 409 {
 		t.Fatalf("shell accepted during maintenance: %d", result.Code)
+	}
+}
+
+func TestMaintenance_ForcedReleaseKeepsNextExecutionTicket(t *testing.T) {
+	for _, force := range []bool{true, false} {
+		g, err := OpenMaintenance(filepath.Join(t.TempDir(), "maintenance.json"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		InstallMaintenance(g)
+		t.Cleanup(func() { InstallMaintenance(nil) })
+		s := &Session{}
+		old, ok := s.TryLock()
+		if !ok {
+			t.Fatal("initial lock")
+		}
+		if force {
+			if !s.ForceUnlock() {
+				t.Fatal("force unlock failed")
+			}
+		} else if _, broken := s.BreakStaleLock(-time.Second); !broken {
+			t.Fatal("stale lock retained")
+		}
+		if g.Snapshot().Active != 0 {
+			t.Fatal("execution ticket leaked")
+		}
+		current, ok := s.TryLock()
+		if !ok {
+			t.Fatal("reacquire failed")
+		}
+		s.Unlock(old)
+		if g.Snapshot().Active != 1 || !s.Busy() {
+			t.Fatal("late unlock released the new turn")
+		}
+		s.Unlock(current)
+		if err := g.Begin("op", "rev"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

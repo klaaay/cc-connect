@@ -21,6 +21,7 @@ const (
 	HookEventMessageSent         HookEventType = "message.sent"
 	HookEventSessionStarted      HookEventType = "session.started"
 	HookEventSessionEnded        HookEventType = "session.ended"
+	HookEventTurnCancelled       HookEventType = "turn.cancelled"
 	HookEventCronTriggered       HookEventType = "cron.triggered"
 	HookEventTimerTriggered      HookEventType = "timer.triggered"
 	HookEventPermissionRequested HookEventType = "permission.requested"

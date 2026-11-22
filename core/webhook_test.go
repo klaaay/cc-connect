@@ -173,10 +173,11 @@ func TestWebhookServer_PromptQueuesWhenSessionBusy(t *testing.T) {
 	engine := NewEngine("fix-project", &stubAgent{}, []Platform{platform}, "", LangEnglish)
 	const sessionKey = "telegram:1:1"
 	session := engine.sessions.GetOrCreateActive(sessionKey)
-	if !session.TryLock() {
+	gen, locked := session.TryLock()
+	if !locked {
 		t.Fatal("failed to prepare busy session")
 	}
-	defer session.Unlock()
+	defer session.Unlock(gen)
 	engine.ensureInteractiveStateForQueueing(sessionKey, platform, sessionKey)
 
 	ws := NewWebhookServer(0, "", "/hook")

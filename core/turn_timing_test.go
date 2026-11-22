@@ -59,7 +59,7 @@ func TestInteractiveTimingExcludesPermissionPauseAndPreSendTime(t *testing.T) {
 	finished := make(chan struct{})
 	started := time.Now()
 	go func() {
-		engine.processInteractiveEvents(state, session, engine.sessions, "test:timing", "timed", started.Add(-time.Hour), nil, nil, "ctx", started)
+		engine.processInteractiveEvents(state, session, engine.sessions, "test:timing", "timed", started.Add(-time.Hour), nil, nil, "ctx", 0, started)
 		close(finished)
 	}()
 	deadline := time.Now().Add(2 * time.Second)
@@ -108,7 +108,7 @@ func TestTurnTimingEndsBeforeResultFinalization(t *testing.T) {
 	state := &interactiveState{agentSession: agent, platform: platform, replyCtx: "ctx"}
 	agent.events <- Event{Type: EventResult, Content: "done", Done: true}
 	started := time.Now()
-	engine.processInteractiveEvents(state, session, engine.sessions, "test:finalize", "timed", started, nil, nil, "ctx", started)
+	engine.processInteractiveEvents(state, session, engine.sessions, "test:finalize", "timed", started, nil, nil, "ctx", 0, started)
 	timing := session.GetHistory(0)[0].Timing
 	if timing == nil || time.Since(timing.EndedAt) < 75*time.Millisecond {
 		t.Fatalf("finalization included in timing: %+v", timing)
@@ -131,7 +131,7 @@ func TestTurnTimingCoversDrainAndResetsQueuedTurn(t *testing.T) {
 		{content: "first", platform: platform, replyCtx: "ctx", messageID: "one"},
 		{content: "second", platform: platform, replyCtx: "ctx", messageID: "two"},
 	}}
-	engine.drainPendingMessages(state, session, engine.sessions, "test:drain")
+	engine.drainPendingMessages(state, session, engine.sessions, "test:drain", 0, false)
 	var timings []*TurnTiming
 	for _, entry := range session.GetHistory(0) {
 		if entry.Role == "assistant" {

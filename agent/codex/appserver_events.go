@@ -7,7 +7,7 @@ import "github.com/chenhg5/cc-connect/core"
 func (s *appServerSession) emit(event core.Event) {
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
-	if s.eventClosed {
+	if s.eventClosed || (s.ctx != nil && s.ctx.Err() != nil) {
 		return
 	}
 	if s.eventDone == nil {

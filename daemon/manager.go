@@ -21,13 +21,14 @@ const (
 )
 
 type Config struct {
-	BinaryPath        string
-	WorkDir           string
-	LogFile           string
-	LogMaxSize        int64
-	LogMaxBackups     int
-	EnvPATH           string            // capture user's PATH so agents are accessible
-	EnvExtra          map[string]string // selected environment variables needed by the service runtime
+	BinaryPath    string
+	WorkDir       string
+	HomeDir       string // captured HOME so subprocesses can resolve ~/… paths (issue: relative data_dir fallback)
+	LogFile       string
+	LogMaxSize    int64
+	LogMaxBackups int
+	EnvPATH       string            // capture user's PATH so agents are accessible
+	EnvExtra      map[string]string // selected environment variables needed by the service runtime
 	// NoCaptureSecrets, when true, restricts the install-time env capture
 	// to proxy-related variables only and skips both the config.toml ${ENV}
 	// placeholder scan and any extension discoverers registered via
@@ -54,6 +55,19 @@ type Manager interface {
 	Platform() string
 }
 
+// InPlaceRestarter is implemented by managers whose Restart must replace the
+// running service in place instead of a separate Stop followed by Start.
+//
+// launchd is the case: Stop boots out every cc-connect label, including the
+// legacy com.cc-connect.retry agent, and also kills commands the daemon
+// spawned. Its Restart kicks the loaded job with `launchctl kickstart -kp`,
+// kicks a loaded legacy job instead of tearing it down, and refuses to touch
+// anything when the current plist is missing. Callers use this method when it is
+// available so a `daemon restart` cannot leave a legacy-only install down.
+type InPlaceRestarter interface {
+	RestartInPlace() error
+}
+
 // NewManager returns a platform-specific daemon manager.
 func NewManager() (Manager, error) {
 	return newPlatformManager()
@@ -74,12 +88,12 @@ func DefaultDataDir() string {
 // etc. can locate the log file without parsing service definitions.
 
 type Meta struct {
-	LogFile      string `json:"log_file"`
-	LogMaxSize   int64  `json:"log_max_size"`
-	LogMaxBackups int   `json:"log_max_backups"`
-	WorkDir      string `json:"work_dir"`
-	BinaryPath   string `json:"binary_path"`
-	InstalledAt  string `json:"installed_at"`
+	LogFile       string `json:"log_file"`
+	LogMaxSize    int64  `json:"log_max_size"`
+	LogMaxBackups int    `json:"log_max_backups"`
+	WorkDir       string `json:"work_dir"`
+	BinaryPath    string `json:"binary_path"`
+	InstalledAt   string `json:"installed_at"`
 }
 
 func metaPath() string {
@@ -147,6 +161,15 @@ func Resolve(cfg *Config) error {
 	}
 	if cfg.EnvPATH == "" {
 		cfg.EnvPATH = os.Getenv("PATH")
+	}
+	if cfg.HomeDir == "" {
+		// os.UserHomeDir uses HOME on Unix and USERPROFILE on Windows.
+		// A non-empty result gets baked into the service unit so the
+		// daemon (and any subprocess it spawns) sees the correct home
+		// even when systemd/launchd would otherwise leave HOME unset.
+		if home, err := os.UserHomeDir(); err == nil {
+			cfg.HomeDir = home
+		}
 	}
 	if len(cfg.EnvExtra) == 0 {
 		cfg.EnvExtra = captureDaemonEnv(cfg.NoCaptureSecrets)
@@ -269,4 +292,3 @@ func captureConfigEnvPlaceholdersInString(s string, env map[string]string) {
 		}
 	}
 }
-

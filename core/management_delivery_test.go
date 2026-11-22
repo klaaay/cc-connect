@@ -108,14 +108,15 @@ func TestManagedDelivery_GuardedNewRequiresSameIdleSession(t *testing.T) {
 	selected := engine.sessions.GetOrCreateActive("telegram:1:1")
 	previous := selected.ID
 	guard := webhookIngressGuard{previousSessionID: &previous}
-	if !selected.TryLock() {
+	gen, locked := selected.TryLock()
+	if !locked {
 		t.Fatal("test session not idle")
 	}
 	delivery, _ := (&WebhookServer{}).acceptPrompt(engine, "telegram:1:1", "/new isolated", true, "test", guard)
 	if delivery != "rejected:session_busy" || engine.sessions.ActiveSessionID("telegram:1:1") != previous {
 		t.Fatal("busy session was replaced")
 	}
-	selected.Unlock()
+	selected.Unlock(gen)
 	replacement := engine.sessions.NewSession("telegram:1:1", "user-created")
 	delivery, _ = (&WebhookServer{}).acceptPrompt(engine, "telegram:1:1", "/new isolated", true, "test", guard)
 	if delivery != "rejected:session_changed" || engine.sessions.ActiveSessionID("telegram:1:1") != replacement.ID {

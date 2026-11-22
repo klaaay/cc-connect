@@ -102,12 +102,12 @@ func TestManagementStopReplacedBusySessionRemainsPending(t *testing.T) {
 	m, _, e := testManagementServer(t, "secret")
 	defer e.cancel()
 	previous := e.sessions.GetOrCreateActive("test:user1")
-	previous.TryLock()
+	gen, _ := previous.TryLock()
 	e.sessions.NewSession("test:user1", "replacement")
 	if r := requestManagedStop(m, previous.ID); r.Code != 202 {
 		t.Fatalf("busy old session must remain pending: %d", r.Code)
 	}
-	previous.Unlock()
+	previous.Unlock(gen)
 	if r := requestManagedStop(m, previous.ID); r.Code != 200 {
 		t.Fatalf("settled old session: %d", r.Code)
 	}
@@ -135,7 +135,7 @@ func TestManagementStopBeforeAgentStartupDoesNotSpawn(t *testing.T) {
 	m, _, e := testManagementServer(t, "secret")
 	defer e.cancel()
 	session := e.sessions.GetOrCreateActive("test:user1")
-	session.TryLock()
+	gen, _ := session.TryLock()
 	e.interactiveStates["test:user1"] = &interactiveState{}
 	stop, err := e.beginManagedSessionStop(managedStopRequest{SessionKey: "test:user1", SessionID: session.ID, RequestID: "stop-task-1"})
 	if err != nil {
@@ -146,7 +146,7 @@ func TestManagementStopBeforeAgentStartupDoesNotSpawn(t *testing.T) {
 	if !state.isStopped() {
 		t.Fatal("cancelled placeholder started an agent")
 	}
-	session.Unlock()
+	session.Unlock(gen)
 	select {
 	case <-stop.done:
 	case <-time.After(time.Second):
