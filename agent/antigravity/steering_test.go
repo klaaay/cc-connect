@@ -4,10 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"github.com/chenhg5/cc-connect/agent/antigravityhook"
-	"github.com/chenhg5/cc-connect/core"
 	"strings"
 	"testing"
+
+	"github.com/chenhg5/cc-connect/agent/antigravityhook"
+	"github.com/chenhg5/cc-connect/core"
 )
 
 func TestSteering_InjectsInSameTurnAndRejectsLateGuidance(t *testing.T) {
@@ -47,9 +48,9 @@ func TestSteering_InjectsInSameTurnAndRejectsLateGuidance(t *testing.T) {
 	if len(b.invocationHook("PreInvocation").InjectSteps) != 1 {
 		t.Fatal("missing final guidance")
 	}
-	b.invocationHook("Stop")
+	b.endTurn()
 	if b.steer("too late") == nil {
-		t.Fatal("accepted steering after stop")
+		t.Fatal("accepted steering after turn end")
 	}
 }
 
@@ -88,5 +89,59 @@ func TestSteering_RelayPreservesUserRoleAndIgnoresSubagents(t *testing.T) {
 	b.endTurn()
 	if b.steer("late") == nil {
 		t.Fatal("accepted after process exit")
+	}
+}
+
+func TestSteering_AfterIntermediateStopDeliversOnceUntilResult(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	as, err := newAntigravitySession(context.Background(), "agy", nil, t.TempDir(), "", "default", "main", nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer as.Close()
+	b := as.steeringBridge
+	b.beginTurn()
+	hook := func(event string) antigravityhook.BridgeResponse {
+		return b.invocationHookFor(event, json.RawMessage(`{"conversationId":"main"}`))
+	}
+	b.invocationHookFor("PreInvocation", json.RawMessage(`{"conversationId":"child"}`))
+	hook("Stop")
+	if err := as.SteerTurn("continue with tests"); err != nil {
+		t.Fatal(err)
+	}
+	if hook("Stop").Decision != "continue" {
+		t.Fatal("pending guidance lost at stop")
+	}
+	steps := hook("PreInvocation").InjectSteps
+	if len(steps) != 1 || steps[0].UserMessage != "continue with tests" {
+		t.Fatalf("steps=%v", steps)
+	}
+	if len(hook("PostInvocation").InjectSteps) != 0 {
+		t.Fatal("duplicate guidance")
+	}
+
+	hook("Stop")
+	if err := as.SteerTurn("arrived before final result"); err != nil {
+		t.Fatal(err)
+	}
+	as.readStream(strings.NewReader(`{"event":"result","result":{"conversation_id":"main","status":"SUCCESS"}}`))
+	if err := as.SteerTurn("after result"); err == nil {
+		t.Fatal("accepted guidance after result")
+	}
+	b.endTurn() // 收到 result 后进程退出，不能重复报告投递失败。
+	select {
+	case e := <-as.events:
+		if e.Type != core.EventError || !strings.Contains(e.Error.Error(), "before queued guidance could be delivered") {
+			t.Fatalf("event=%+v", e)
+		}
+	default:
+		t.Fatal("missing undelivered guidance error")
+	}
+	if len(as.events) != 0 {
+		t.Fatal("duplicate undelivered guidance error")
+	}
+	b.beginTurn()
+	if len(hook("PreInvocation").InjectSteps) != 0 {
+		t.Fatal("undelivered guidance leaked into next turn")
 	}
 }

@@ -89,6 +89,9 @@ func (as *antigravitySession) readStream(reader io.Reader) bool {
 				as.emit(core.Event{Type: core.EventText, Content: event.Step.Text})
 			}
 		case "result":
+			if as.steeringBridge != nil {
+				as.steeringBridge.endTurn()
+			}
 			if !hadText && event.Result.Response != "" {
 				hadText = true
 				hasResponse = hasResponse || strings.TrimSpace(event.Result.Response) != ""

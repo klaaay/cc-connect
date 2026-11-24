@@ -71,6 +71,9 @@ func newAntigravitySession(ctx context.Context, cmd string, extraArgs []string, 
 
 	if resumeID != "" && resumeID != core.ContinueSession {
 		as.chatID.Store(resumeID)
+		bridge.turnMu.Lock()
+		bridge.conversationID = resumeID
+		bridge.turnMu.Unlock()
 	}
 
 	return as, nil

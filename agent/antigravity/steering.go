@@ -44,12 +44,10 @@ func (b *agyPermissionBridge) invocationHook(event string) antigravityhook.Bridg
 	defer b.turnMu.Unlock()
 	response := antigravityhook.BridgeResponse{}
 	if event == "Stop" {
-		// Hold the same loop open so PreInvocation injects guidance as a user message.
+		// Stop 之后 AGY 仍可能继续调用工具。由流的 result 或进程退出结束本轮。
 		if len(b.guidance) > 0 {
 			response.Decision = "continue"
 			response.Reason = "User guidance is pending in the next invocation."
-		} else {
-			b.turnActive = false
 		}
 		return response
 	}
