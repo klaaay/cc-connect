@@ -94,6 +94,13 @@ func (e *Engine) notifierTaskConfirmation(s *notifierSelection) string {
 			text += "\n" + e.i18n.T(MsgWNSyncSteps)
 		}
 	}
+	if snapshot, _ := s.input["reviewSnapshot"].(bool); snapshot {
+		source, _ := s.input["sourceBranch"].(string)
+		target, _ := s.input["targetBranch"].(string)
+		if source != "" && target != "" {
+			text += "\n" + e.i18n.Tf(MsgWNSnapshotMR, source, target)
+		}
+	}
 	return text + "\n" + e.i18n.T(MsgWNConfirmTask)
 }
 func (e *Engine) notifierConfirmTask(p Platform, msg *Message, s *notifierSelection, text string) bool {

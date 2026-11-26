@@ -811,6 +811,13 @@ var messages = map[MsgKey]map[Language]string{
 		LangJapanese:           "パラメーターを確認し、execute で送信、cancel で終了。",
 		LangSpanish:            "Revisa los parámetros. Responde execute para enviar o cancel para salir.",
 	},
+	MsgWNSnapshotMR: {
+		LangEnglish:            "Snapshot MR: %s-review-YYYYMMDDHHmm → %s (Beijing time at submission)",
+		LangChinese:            "快照 MR：%s-review-YYYYMMDDHHmm → %s（按受理时的北京时间命名）",
+		LangTraditionalChinese: "快照 MR：%s-review-YYYYMMDDHHmm → %s（依受理時的北京時間命名）",
+		LangJapanese:           "スナップショット MR：%s-review-YYYYMMDDHHmm → %s（受付時の北京時間）",
+		LangSpanish:            "MR de instantánea: %s-review-YYYYMMDDHHmm → %s (hora de Pekín al recibir la solicitud)",
+	},
 	MsgWNSyncSteps: {
 		LangEnglish:            "Fast-forwards targets to the source in the task's bound repository; stops on diverged branches. Repository-specific preparation is handled by the server.",
 		LangChinese:            "在任务绑定仓库内将目标快进到来源分支；分支分叉时停止。仓库特有的准备步骤由服务端执行。",
@@ -4935,6 +4942,7 @@ const (
 	MsgWNDefaultChoice   MsgKey = "MsgWNDefaultChoice"
 	MsgWNTrackingProject MsgKey = "MsgWNTrackingProject"
 	MsgWNConfirmTask     MsgKey = "MsgWNConfirmTask"
+	MsgWNSnapshotMR      MsgKey = "MsgWNSnapshotMR"
 	MsgWNSyncSteps       MsgKey = "MsgWNSyncSteps"
 	MsgWNField           MsgKey = "wn_field"
 	MsgWNClear           MsgKey = "wn_clear"

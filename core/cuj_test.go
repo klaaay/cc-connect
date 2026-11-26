@@ -2950,13 +2950,15 @@ func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
 	for _, tc := range []struct {
 		reply, reviewer string
 		present         bool
+		snapshotReply   string
+		snapshot        bool
 		merge           string
 		auto            bool
 	}{
-		{"default", "wuzhen01", true, "default", false},
-		{"clear", "", true, "1", true},
-		{"SKIP", "", false, "2", false},
-		{"other-reviewer", "other-reviewer", true, "true", true},
+		{"default", "wuzhen01", true, "1", true, "default", false},
+		{"clear", "", true, "默认", false, "1", true},
+		{"SKIP", "", false, "2", false, "2", false},
+		{"other-reviewer", "other-reviewer", true, "true", true, "true", true},
 	} {
 		t.Run(tc.reply, func(t *testing.T) {
 			env := newCUJEnv(t)
@@ -2971,6 +2973,7 @@ func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
 				{Key: "sourceBranch", Label: "Source", Type: "text", Required: true, Options: []string{"ui"}, DefaultValue: "ui"},
 				{Key: "targetBranch", Label: "Target", Type: "text", Required: true, Options: []string{"dev"}, DefaultValue: "dev", ExcludeField: "sourceBranch"},
 				{Key: "reviewerUsername", Label: "Reviewer", Type: "text", Format: "gitlab-username", DefaultValue: "wuzhen01"},
+				{Key: "reviewSnapshot", Label: "Snapshot", Type: "boolean", DefaultValue: false},
 				{Key: "autoMerge", Label: "Merge", Type: "boolean", DefaultValue: false},
 			}
 			state.mu.Unlock()
@@ -2986,10 +2989,18 @@ func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
 				t.Fatal("invalid reviewer advanced form", env.lastSent())
 			}
 			env.userSends("alice", tc.reply)
+			if !strings.Contains(env.lastSent(), "Snapshot") {
+				t.Fatal(env.lastSent())
+			}
+			env.userSends("alice", tc.snapshotReply)
 			if !strings.Contains(env.lastSent(), "Merge") {
 				t.Fatal(env.lastSent())
 			}
 			env.userSends("alice", tc.merge)
+			summary := env.lastSent()
+			if strings.Contains(summary, "ui-review-YYYYMMDDHHmm → dev") != tc.snapshot || !strings.Contains(summary, fmt.Sprintf("Snapshot: %t", tc.snapshot)) || !strings.Contains(summary, fmt.Sprintf("Merge: %t", tc.auto)) {
+				t.Fatal(summary)
+			}
 			if !strings.Contains(env.lastSent(), "execute") {
 				t.Fatal(env.lastSent())
 			}
@@ -3010,7 +3021,7 @@ func TestCUJ_WN6_MergeFormReviewerDefaultsAndClear(t *testing.T) {
 			}
 			input := state.writes[0]["input"].(map[string]any)
 			reviewer, present := input["reviewerUsername"]
-			if present != tc.present || (present && reviewer != tc.reviewer) || input["autoMerge"] != tc.auto || input["sourceBranch"] != "ui" || input["targetBranch"] != "dev" {
+			if present != tc.present || (present && reviewer != tc.reviewer) || input["reviewSnapshot"] != tc.snapshot || input["autoMerge"] != tc.auto || input["sourceBranch"] != "ui" || input["targetBranch"] != "dev" {
 				t.Fatalf("wrong submission: %v", input)
 			}
 		})
